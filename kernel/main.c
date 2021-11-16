@@ -18,6 +18,12 @@ main()
     printf("\n");
     kinit();         // physical page allocator
     kvminit();       // create kernel page table
+
+    printf("\n");
+    char* srat = init_SRAT();
+    print_srat(srat);
+    printf("\n\n");
+
     kvminithart();   // turn on paging
     procinit();      // process table
     trapinit();      // trap vectors
