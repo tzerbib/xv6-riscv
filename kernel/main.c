@@ -22,6 +22,10 @@ main()
     printf("\n");
     char* srat = init_SRAT();
     print_srat(srat);
+    init_topology();
+    add_numa(srat);
+    printf("\n\n--- Computed topology: ---\n\n");
+    print_topology();
     printf("\n\n");
 
     kvminithart();   // turn on paging

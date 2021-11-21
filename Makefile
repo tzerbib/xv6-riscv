@@ -29,7 +29,8 @@ OBJS = \
   $K/kernelvec.o \
   $K/plic.o \
   $K/virtio_disk.o \
-  $K/mystuff.o
+  $K/acpi.o \
+  $K/topology.o \
 
 # riscv64-unknown-elf- or riscv64-linux-gnu-
 # perhaps in /opt/riscv/bin
@@ -157,16 +158,16 @@ ifndef CPUS
 CPUS := 3
 endif
 ifndef MEMORY
-MEMORY := 128M
+MEMORY := 512M
 endif
 
 QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m $(MEMORY) -smp $(CPUS) -nographic
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
-QEMUOPTS += -object memory-backend-ram,id=m0,size=64M
-QEMUOPTS += -object memory-backend-ram,id=m1,size=64M
-QEMUOPTS += -numa node,memdev=m0,cpus=0-1,nodeid=0
-QEMUOPTS += -numa node,memdev=m1,cpus=2,nodeid=1
+# QEMUOPTS += -object memory-backend-ram,id=m0,size=256M
+# QEMUOPTS += -object memory-backend-ram,id=m1,size=256M
+# QEMUOPTS += -numa node,memdev=m0,cpus=0,nodeid=0
+# QEMUOPTS += -numa node,memdev=m1,cpus=1-2,nodeid=1
 
 # QEMUOPTS += -numa node,cpus=0-1,nodeid=0
 # QEMUOPTS += -numa node,cpus=2,nodeid=1
@@ -178,6 +179,6 @@ qemu: $K/kernel fs.img
 	sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 
 qemu-gdb: $K/kernel .gdbinit fs.img
-	@echo "*** Now run 'gdb' in another window." 1>&2
+	@echo "*** Now run 'gdb' in another window on port $(GDBPORT)." 1>&2
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
 

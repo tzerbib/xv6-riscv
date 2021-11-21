@@ -186,6 +186,23 @@ void            virtio_disk_intr(void);
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
 
 
-// mystuff.c
+
+////////////////////////////////////////////////////////////////////////////////
+// End of original xv6
+////////////////////////////////////////////////////////////////////////////////
+
+struct SRAT;
+struct machine;
+struct cpu_desc;
+struct memrange;
+struct domain;
+
+
+// acpi.c
 void* init_SRAT(void);
 void print_srat(void*);
+
+// topology.c
+void init_topology();
+void add_numa(void*);
+void print_topology(void);

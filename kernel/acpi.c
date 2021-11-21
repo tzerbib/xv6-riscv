@@ -1,110 +1,7 @@
-#include "types.h"
+#include "acpi.h"
 #include "memlayout.h"
 #include "riscv.h"
 #include "defs.h"
-
-
-// Number of ACPI cores
-#define NBCPU       2
-
-// Informations for ACPI Header
-#define OEMID_VALUE "BOCHS "
-#define OEM_TABLEID "BXPCSRAT"
-#define CREATOR_ID  "BXPC"
-
-// Flags for affinity structures
-#define F_ENABLED (1 << 0)
-#define F_HOTPLUG (1 << 1)
-#define F_NOVOLAT (1 << 2)
-
-
-// RSTD table Header
-struct ACPISDTHeader {
-  char Signature[4];
-  uint32_t Length;
-  uint8_t Revision;
-  uint8_t Checksum;
-  char OEMID[6];
-  char OEMTableID[8];
-  uint32_t OEMRevision;
-  uint32_t CreatorID;
-  uint32_t CreatorRevision;
-};
-
-
-// RSDT complete table 
-struct RSDT {
-  struct ACPISDTHeader h;
-  uint32_t PointerToOtherSDT[];
-};
-
-
-// header of the SRAT table
-struct SRAT
-{
-    char signature[4];   // Contains "SRAT"
-    uint32_t length;     // Length of entire SRAT including entries
-    uint8_t  rev;        // 3
-    uint8_t  checksum;   // Entire table must sum to zero
-    uint8_t  OEMID[6];   // What do you think it is?
-    uint64_t OEMTableID; // For the SRAT it's the manufacturer model ID
-    uint32_t OEMRev;     // OEM revision for OEM Table ID
-    uint32_t creatorID;  // Vendor ID of the utility used to create the table
-    uint32_t creatorRev; // Blah blah
- 
-    uint8_t reserved[12];
-} __attribute__((packed));
-
-
-
-// Static Resource Allocation Structures
-
-// Processor Local APIC Affinity Structure
-struct SRAT_proc_lapic_struct
-{
-    uint8_t type;      // 0x0 for this type of structure
-    uint8_t length;    // 16
-    uint8_t lo_DM;     // Bits [0:7] of the proximity domain
-    uint8_t APIC_ID;   // Processor's APIC ID
-    uint32_t flags;    // Haha the most useless thing ever
-    uint8_t SAPIC_EID; // The processor's local SAPIC EID. Don't even bother.
-    uint8_t hi_DM[3];  // Bits [8:31] of the proximity domain
-    uint32_t _CDM;     // The clock domain which the processor belongs to (more jargon)
-} __attribute__((packed));
-
-
-
-// Processor Local x2APIC Affinity Structure
-struct SRAT_proc_lapic2_struct
-{
-    uint8_t type;         // 0x2 for this type of structure
-    uint8_t length;       // 24
-    uint8_t reserved1[2]; // Must be zero
-    uint32_t domain;      // The proximity domain which the logical processor belongs to
-    uint32_t x2APIC_ID;   // Processor's x2APIC ID
-    uint32_t flags;       // Haha the most useless thing ever
-    uint32_t _CDM;        // The clock domain which the processor belongs to (more jargon)
-    uint8_t reserved2[4]; // Reserved.
-} __attribute__((packed));
-
-
-
-// Memory Affinity Structure
-struct SRAT_mem_struct
-{
-    uint8_t type;         // 0x1 for this type of structure
-    uint8_t length;       // 40
-    uint32_t domain;      // The domain to which this memory region belongs to
-    uint8_t reserved1[2]; // Reserved
-    uint32_t lo_base;     // Low 32 bits of the base address of the memory range
-    uint32_t hi_base;     // High 32 bits of the base address of the memory range
-    uint32_t lo_length;   // Low 32 bits of the length of the range
-    uint32_t hi_length;   // High 32 bits of the length
-    uint8_t reserved2[4]; // Reserved
-    uint32_t flags;       // Flags
-    uint8_t reserved3[8]; // Reserved
-} __attribute__ ((packed));
-
 
 
 // Kernels SRAT table, initialized in init_SRAT
@@ -281,8 +178,8 @@ void print_srat(void* ptr){
         printf("Processor Local APIC Affinity Structure:\n");
         printf("\tType: %d\n", ((struct SRAT_proc_lapic_struct*)curr)->type);
         printf("\tLength: %d\n", ((struct SRAT_proc_lapic_struct*)curr)->length);
-        printf("\tProximity domain (low): %d\n", ((struct SRAT_proc_lapic_struct*)curr)->lo_DM);
-        printf("\tProximity domain (high): %d %d %d\n", ((struct SRAT_proc_lapic_struct*)curr)->hi_DM[0], ((struct SRAT_proc_lapic_struct*)curr)->hi_DM[1], ((struct SRAT_proc_lapic_struct*)curr)->hi_DM[2]);
+        printf("\tProximity domain (low): 0x%x\n", ((struct SRAT_proc_lapic_struct*)curr)->lo_DM);
+        printf("\tProximity domain (high): 0x%x%x%x\n", ((struct SRAT_proc_lapic_struct*)curr)->hi_DM[0], ((struct SRAT_proc_lapic_struct*)curr)->hi_DM[1], ((struct SRAT_proc_lapic_struct*)curr)->hi_DM[2]);
         printf("\tAPIC ID: %d\n", ((struct SRAT_proc_lapic_struct*)curr)->APIC_ID);
         printf("\tFlags: %d\n", ((struct SRAT_proc_lapic_struct*)curr)->flags);
         printf("\tSAPIC EID: %d\n", ((struct SRAT_proc_lapic_struct*)curr)->SAPIC_EID);
@@ -290,24 +187,26 @@ void print_srat(void* ptr){
         printf("\n");
         break;
       }
+      // Memory Affinity Structure
       case 0x1:{
         printf("Memory Affinity Structure:\n");
         printf("Type: %d\n", ((struct SRAT_mem_struct*)curr)->type);
         printf("Length: %d\n", ((struct SRAT_mem_struct*)curr)->length);
-        printf("Proximity domain: %d\n", ((struct SRAT_mem_struct*)curr)->domain);
-        printf("Memory range base addr (low): %d\n", ((struct SRAT_mem_struct*)curr)->lo_base);
-        printf("Memory range base addr (high): %d\n", ((struct SRAT_mem_struct*)curr)->hi_base);
-        printf("Length of the range (low): %d\n", ((struct SRAT_mem_struct*)curr)->lo_length);
-        printf("Length of the range (high): %d\n", ((struct SRAT_mem_struct*)curr)->hi_length);
+        printf("Proximity domain: 0x%x\n", ((struct SRAT_mem_struct*)curr)->domain);
+        printf("Memory range base addr (low): 0x%x\n", ((struct SRAT_mem_struct*)curr)->lo_base);
+        printf("Memory range base addr (high): 0x%x\n", ((struct SRAT_mem_struct*)curr)->hi_base);
+        printf("Length of the range (low): 0x%x\n", ((struct SRAT_mem_struct*)curr)->lo_length);
+        printf("Length of the range (high): 0x%x\n", ((struct SRAT_mem_struct*)curr)->hi_length);
         printf("Flags: %d\n", ((struct SRAT_mem_struct*)curr)->flags);
         printf("\n");
         break;
       }
+      // Processor Local x2APIC Affinity Structure
       case 0x2:{
         printf("Processor Local x2APIC Affinity Structure:\n");
         printf("Type: %d\n", ((struct SRAT_proc_lapic2_struct*)curr)->type);
         printf("Length: %d\n", ((struct SRAT_proc_lapic2_struct*)curr)->length);
-        printf("Proximity domain: %d\n", ((struct SRAT_proc_lapic2_struct*)curr)->domain);
+        printf("Proximity domain: 0x%x\n", ((struct SRAT_proc_lapic2_struct*)curr)->domain);
         printf("Processor x2APIC ID: %d\n", ((struct SRAT_proc_lapic2_struct*)curr)->x2APIC_ID);
         printf("Flags: %d\n", ((struct SRAT_proc_lapic2_struct*)curr)->flags);
         printf("Clock domain: %d\n", ((struct SRAT_proc_lapic2_struct*)curr)->_CDM);
