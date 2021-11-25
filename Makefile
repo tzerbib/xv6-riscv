@@ -164,13 +164,10 @@ endif
 QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m $(MEMORY) -smp $(CPUS) -nographic
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
-# QEMUOPTS += -object memory-backend-ram,id=m0,size=256M
-# QEMUOPTS += -object memory-backend-ram,id=m1,size=256M
-# QEMUOPTS += -numa node,memdev=m0,cpus=0,nodeid=0
-# QEMUOPTS += -numa node,memdev=m1,cpus=1-2,nodeid=1
-
-# QEMUOPTS += -numa node,cpus=0-1,nodeid=0
-# QEMUOPTS += -numa node,cpus=2,nodeid=1
+QEMUOPTS += -object memory-backend-ram,id=m0,size=256M
+QEMUOPTS += -object memory-backend-ram,id=m1,size=256M
+QEMUOPTS += -numa node,memdev=m0,cpus=0,nodeid=0
+QEMUOPTS += -numa node,memdev=m1,cpus=1-2,nodeid=1
 
 qemu: $K/kernel fs.img
 	$(QEMU) $(QEMUOPTS)

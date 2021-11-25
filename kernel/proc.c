@@ -2,7 +2,7 @@
 #include "param.h"
 #include "memlayout.h"
 #include "riscv.h"
-#include "spinlock.h"
+#include "topology.h"
 #include "proc.h"
 #include "defs.h"
 
@@ -18,7 +18,10 @@ struct spinlock pid_lock;
 extern void forkret(void);
 static void freeproc(struct proc *p);
 
-extern char trampoline[]; // trampoline.S
+extern char trampoline[];        // trampoline.S
+
+extern struct machine* machine;  // topology.c
+
 
 // helps ensure that wakeups of wait()ing
 // parents are not lost. helps obey the
@@ -65,6 +68,24 @@ cpuid()
   int id = r_tp();
   return id;
 }
+
+
+// Must be called with interrupts disable because of cpuid()
+void* my_domain(){
+  struct cpu_desc* curr;
+  
+  int cpu = cpuid();
+
+  // Browse cpu structures until the one running this code is found
+  for(curr=machine->all_cpus; curr; curr=curr->all_next){
+    if(curr->lapic == cpu){
+      return curr->domain;
+    }
+  }
+
+  panic("The cpu running this code is not known by the kernel");
+}
+
 
 // Return this CPU's cpu struct.
 // Interrupts must be disabled.

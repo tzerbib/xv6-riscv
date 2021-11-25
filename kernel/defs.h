@@ -104,6 +104,7 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+void*           my_domain(void);
 
 // swtch.S
 void            swtch(struct context*, struct context*);
@@ -191,13 +192,6 @@ void            virtio_disk_intr(void);
 // End of original xv6
 ////////////////////////////////////////////////////////////////////////////////
 
-struct SRAT;
-struct machine;
-struct cpu_desc;
-struct memrange;
-struct domain;
-
-
 // acpi.c
 void* init_SRAT(void);
 void print_srat(void*);
@@ -206,3 +200,5 @@ void print_srat(void*);
 void init_topology();
 void add_numa(void*);
 void print_topology(void);
+void assign_freepages(void);
+
