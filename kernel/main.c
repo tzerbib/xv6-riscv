@@ -5,7 +5,6 @@
 #include "defs.h"
 
 volatile static int started = 0;
-extern char numa_ready;
 
 // start() jumps here in supervisor mode on all CPUs.
 void
@@ -29,7 +28,6 @@ main()
     printf("\n\n--- Computed topology: ---\n\n");
     print_topology();
     assign_freepages();
-    numa_ready = 1;
     printf("\n\n--- Computed topology: ---\n\n");
     print_topology();
     printf("\n\n");
