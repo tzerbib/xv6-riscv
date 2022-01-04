@@ -14,7 +14,7 @@ main()
     consoleinit();
     printfinit();
     printf("\n");
-    printf("xv6 kernel is booting\n");
+    printf("xv6 kernel is booting on hart %d\n", cpuid());
     printf("\n");
     kinit();         // physical page allocator
     kvminit();       // create kernel page table
@@ -41,5 +41,5 @@ main()
     plicinithart();   // ask PLIC for device interrupts
   }
 
-  scheduler();        
+  scheduler();
 }
