@@ -3,6 +3,7 @@
 #include "riscv.h"
 #include "defs.h"
 #include "acpi.h"
+#include <stdint.h>
 
 
 extern struct kmem kmem;
@@ -11,7 +12,9 @@ extern pagetable_t kernel_pagetable;
 extern char numa_ready;
 
 
-struct machine* machine;       // Beginning of whole machine structure
+struct machine* machine = 0;   // Beginning of whole machine structure
+struct machine* wip_machine = 0;   // Machine structure while in construction
+struct machine* old_machine = 0;   // Old Machine structure not yet freed
 
 struct {
   void* topology_end;          // Next empty place for machine substructures
@@ -19,24 +22,49 @@ struct {
 }numa_allocator;
 
 
-void init_topology(){
-  machine = (struct machine*) kalloc();
-  machine->all_cpus = 0;
-  machine->all_ranges = 0;
-  machine->all_domains = 0;
-  numa_allocator.remaining = PGSIZE - sizeof(struct machine);
-
-  // Point next empty space on newly allocated area
-  numa_allocator.topology_end = (uint8_t*)machine + sizeof(struct machine);
-}
-
 
 // Ensure that there is enought space for a structure to be added
 void ensure_space(uint64_t length){
+  // Each page contain a pointer to the next one
+  char* old_page = numa_allocator.topology_end;
+
   if(numa_allocator.remaining < length){
     numa_allocator.topology_end = kalloc();
-    numa_allocator.remaining = PGSIZE;
+
+    if(wip_machine){
+      // Make old page point to new page
+      *((uint64_t*)PGROUNDDOWN((uint64_t)old_page)) = (uint64_t) numa_allocator.topology_end;
+    }
+    
+    // Initialize next page address at NULL
+    *((uint64_t*)numa_allocator.topology_end) = 0;
+    numa_allocator.topology_end += sizeof(void*);
+    numa_allocator.remaining = PGSIZE - sizeof(void*);
   }
+}
+
+
+void init_topology(){
+  wip_machine = 0;
+  numa_allocator.topology_end = 0;
+  numa_allocator.remaining = 0;
+
+  ensure_space(sizeof(struct machine));
+  wip_machine = (struct machine*) numa_allocator.topology_end;
+  wip_machine->all_cpus = 0;
+  wip_machine->all_ranges = 0;
+  wip_machine->all_domains = 0;
+
+  // Point next empty space on newly allocated area
+  numa_allocator.topology_end += sizeof(struct machine);
+  numa_allocator.remaining -= sizeof(struct machine);
+}
+
+
+void finalize_topology(){
+  old_machine = machine;
+  machine = wip_machine;
+  numa_ready = 1;  // switch to kalloc_numa
 }
 
 
@@ -53,8 +81,8 @@ struct domain* add_domain(uint32_t id){
   new_domain->freepages.freelist = (void*)0;
 
   // Link this new structure to the others
-  new_domain->all_next = machine->all_domains;
-  machine->all_domains = new_domain;
+  new_domain->all_next = wip_machine->all_domains;
+  wip_machine->all_domains = new_domain;
 
   // Compute next empty place
   numa_allocator.topology_end += sizeof(struct domain);
@@ -65,18 +93,18 @@ struct domain* add_domain(uint32_t id){
 
 
 // Returns address of corresponding domain. Creates it if needed.
-struct domain* find_domain(uint32_t id){
+struct domain* find_domain(struct machine* m, uint32_t id, char create){
   struct domain* curr;
   
   // Browse all domains until finding the good one
-  for(curr=machine->all_domains; curr; curr=curr->all_next){
+  for(curr=m->all_domains; curr; curr=curr->all_next){
     if(curr->domain_id == id){
       return curr;
     }
   }
 
   // Create new domain
-  return add_domain(id);
+  return create ? add_domain(id) : (void*)0;
 }
 
 
@@ -91,21 +119,21 @@ void* add_cpu(uint32_t domain_id, uint32_t apic_id){
   
   // Fill the structure information
   new_cpu->lapic = apic_id;
-  struct domain* d = find_domain(domain_id);
+  struct domain* d = find_domain(wip_machine, domain_id, 1);
   new_cpu->domain = d;
   new_cpu->next = d->cpus;
   d->cpus = new_cpu;
 
   // Link this new structure to the others
-  new_cpu->all_next = machine->all_cpus;
-  machine->all_cpus = new_cpu;
+  new_cpu->all_next = wip_machine->all_cpus;
+  wip_machine->all_cpus = new_cpu;
 
   return new_cpu;
 }
 
 
-void* find_memrange(void* addr){
-  struct memrange* curr = machine->all_ranges;
+void* find_memrange(struct machine* m, void* addr){
+  struct memrange* curr = m->all_ranges;
 
   for(; curr; curr=curr->all_next){
     if((addr >= curr->start) && (addr < curr->start + curr->length)){
@@ -129,14 +157,14 @@ void* add_memrange(uint32_t domain_id, void* start, uint64_t length){
   // Fill the structure information
   new_memrange->start = start;
   new_memrange->length = length;
-  struct domain* d = find_domain(domain_id);
+  struct domain* d = find_domain(wip_machine, domain_id, 1);
   new_memrange->domain = d;
   new_memrange->next = d->memranges;
   d->memranges = new_memrange;
 
   // Link this new structure to the others
-  new_memrange->all_next = machine->all_ranges;
-  machine->all_ranges = new_memrange;
+  new_memrange->all_next = wip_machine->all_ranges;
+  wip_machine->all_ranges = new_memrange;
   
   return new_memrange;
 }
@@ -189,7 +217,7 @@ void add_numa(void* ptr){
 
 
 void kfree_numa(void* pa){
-  struct memrange* memrange = find_memrange(pa);
+  struct memrange* memrange = find_memrange(machine, pa);
   if(!memrange){
     printf("Page: %p\n", pa);
     panic("No memory range associated with this page");
@@ -240,10 +268,11 @@ void* kalloc_numa(void){
       if(r)
         break;
     }
-    printf(
-      "freepage %p asked by domain %d, found in domain %d\n",
-      r, ((struct domain*)my_domain())->domain_id, d->domain_id
-    );
+    // Print when a memory allocation is performed in another domain
+    // printf(
+    //   "freepage %p asked by domain %d, found in domain %d\n",
+    //   r, ((struct domain*)my_domain())->domain_id, d->domain_id
+    // );
   }
 
   return r;
@@ -257,31 +286,34 @@ void add_missing_pages(void){
   unsigned int ctr;
 
   // Browse all memory ranges
-  for(m=machine->all_ranges, ctr=0; m; m=m->all_next, ++ctr){
+  for(m=machine->all_ranges; m; m=m->all_next){
     // Add all addresses lower than the kernel to the domain freepage list
     r = (char*)PGROUNDUP((uint64)m->start);
     memend = (char*)m->start+m->length;
     stop = ((char*)KERNBASE < memend)? (char*)KERNBASE : memend;
 
-    for(; r + PGSIZE <= stop; r+=PGSIZE){
+    printf("%p", r);
+    for(ctr=0; r + PGSIZE <= stop; r+=PGSIZE){
       // Avoid some specific addresses
       if((r >= (char*)UART0 && r < (char*)UART0+PGSIZE)
       || (r >= (char*)VIRTIO0 && r < (char*)VIRTIO0+PGSIZE)
       || (r >= (char*)PLIC && r < (char*)PLIC+0x400000)){
         continue;
       }
+
       // Map lower pages
       kvmmap(kernel_pagetable, (uint64)r, (uint64)r, PGSIZE, PTE_R | PTE_W);
       
       // Add the page to the domain freelist
       kfree_numa(r);
+      ++ctr;
     }
-    printf("Stopped at %p (> %p), added %d pages\n", r, stop, ctr);
+    printf(" -- %p (< %p), added %d pages\n", r, stop, ctr);
 
 
-    
     // Add all addresses greater than the kernel to the domain freepage list
-    for(r=(char*)PHYSTOP, ctr=0; r + PGSIZE <= memend ; r+=PGSIZE, ++ctr){
+    printf("%p", r);
+    for(r=(char*)PHYSTOP, ctr=0; r + PGSIZE <= memend ; r+=PGSIZE){
       // Avoid some specific addresses
       if(r >= (char*)TRAMPOLINE && r < (char*)TRAMPOLINE+PGSIZE){
         continue;
@@ -291,8 +323,9 @@ void add_missing_pages(void){
 
       // Add the page to the domain freelist
       kfree_numa(r);
+      ++ctr;
     }
-    printf("Stopped at %p (> %p), added %d pages\n", r, (char*)PHYSTOP, ctr);
+    printf(" -- %p (> %p), added %d pages\n", r, (char*)PHYSTOP, ctr);
   }
 }
 
@@ -302,21 +335,38 @@ void assign_freepages(){
   struct run *r, *r2;
   struct memrange* memrange;
   struct domain* domain;
+  unsigned int ctr = 0;
+  struct domain* curr_dom;
+  struct run *curr_pg, *tmp_pg;
+
+  // Get freepages from the old machine structure
+  if(old_machine){
+    // Browse all domains
+    for(curr_dom=old_machine->all_domains; curr_dom; curr_dom=curr_dom->all_next){
+      // Browse all freepages of a given domain
+      curr_pg=curr_dom->freepages.freelist;
+      while(curr_pg){
+        tmp_pg = curr_pg->next;
+        kfree(curr_pg);
+        curr_pg = tmp_pg;
+        ++ctr;
+      }
+    }
+    return;
+  }
   
   // Get the first free page and clear the freelist
   acquire(&kmem.lock);
   r = kmem.freelist;
   kmem.freelist = (void*)0;
   release(&kmem.lock);
-  numa_ready = 1;
-
 
   // Browse all free pages
   while(r){
     r2 = r->next;
 
     // Look for a domain containing this page
-    memrange = find_memrange(r);
+    memrange = find_memrange(machine, r);
     if(!memrange){
       printf("Page: %p\n", r);
       panic("No memory range associated with this page");
@@ -330,7 +380,10 @@ void assign_freepages(){
     release(&domain->freepages.lock);
 
     r = r2;
+    ++ctr;
   }
+
+  printf("From xv6 freelist, extracted %d pages\n", ctr);
 
   add_missing_pages();
 }
@@ -363,7 +416,7 @@ void print_topology(){
 
   // Browse all domains
   for(curr_dom=machine->all_domains; curr_dom; curr_dom=curr_dom->all_next){
-    printf("(%p) Numa domain %p:\n", curr_dom, curr_dom->domain_id);
+    printf("(%p) Numa domain %d:\n", curr_dom, curr_dom->domain_id);
 
     // Browse all cpu of a given domain
     for(curr_cpu=curr_dom->cpus; curr_cpu; curr_cpu=curr_cpu->next){
@@ -376,9 +429,41 @@ void print_topology(){
     }
 
     // Browse all freepages of a given domain
-    for(ctr=0, curr_pg=curr_dom->freepages.freelist; curr_pg; ctr++, curr_pg=curr_pg->next){}
-    printf("\t\t     There are %d pages associated with this domain\n", ctr);
+    for(ctr=0, curr_pg=curr_dom->freepages.freelist; curr_pg; ctr++, curr_pg=curr_pg->next);
+    printf("\t\t     There are %d free pages associated with this domain\n", ctr);
 
     printf("\n");
   }
+}
+
+
+void print_struct_machine_loc(){
+  uint64_t* next = (uint64_t*) PGROUNDDOWN((uint64_t)machine);
+  uint32_t domain;
+
+  printf("Topology structure in memory:\n");
+  printf("  start");
+
+  while(next){
+    domain = ((struct memrange*)find_memrange(machine, next))->domain->domain_id;
+    printf(" -> %p (%d)", next, domain);
+    next = (uint64_t*)(*next);
+  }
+  printf(" -> 0\n");
+}
+
+
+void free_machine(){
+  uint64_t* next = (uint64_t*) PGROUNDDOWN((uint64_t)old_machine);
+  uint64_t* tmp;
+
+  while(next){
+    tmp = (uint64_t*)(*next);
+    kfree(next);
+    next = tmp;
+  }
+  for(; next; ){
+  }
+
+  old_machine = 0;
 }

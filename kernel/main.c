@@ -6,6 +6,7 @@
 
 volatile static int started = 0;
 
+
 // start() jumps here in supervisor mode on all CPUs.
 void
 main()
@@ -25,11 +26,21 @@ main()
     print_srat(srat);
     init_topology();
     add_numa(srat);
-    printf("\n\n--- Computed topology: ---\n\n");
-    print_topology();
+    finalize_topology();
     assign_freepages();
-    printf("\n\n--- Computed topology: ---\n\n");
+    printf("\n\n--- Computed topology (old kalloc): ---\n\n");
     print_topology();
+    print_struct_machine_loc();
+    printf("\n\n");
+
+    init_topology();
+    add_numa(srat);
+    finalize_topology();
+    assign_freepages();
+    free_machine();
+    printf("\n\n--- Computed topology (new kalloc): ---\n\n");
+    print_topology();
+    print_struct_machine_loc();
     printf("\n\n");
 
 

@@ -32,5 +32,5 @@ struct domain{
   struct domain* all_next;     // Next numa domain in the list of all domains
   struct memrange* memranges;  // First memory range of this numa domain
   struct cpu_desc* cpus;       // First cpu of this numa domain 
-  struct kmem freepages;    // First free page for this domain
+  struct kmem freepages;       // First free page for this domain
 };

@@ -198,7 +198,10 @@ void print_srat(void*);
 
 // topology.c
 void init_topology();
+void finalize_topology();
 void add_numa(void*);
 void print_topology(void);
 void assign_freepages(void);
+void free_machine();
+void print_struct_machine_loc(void);
 
