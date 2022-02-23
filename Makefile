@@ -30,6 +30,14 @@ OBJS = \
   $K/plic.o \
   $K/virtio_disk.o
 
+ifndef CPUS
+CPUS := 3
+endif
+
+ifndef NODES
+NODES := 1
+endif
+
 # riscv64-unknown-elf- or riscv64-linux-gnu-
 # perhaps in /opt/riscv/bin
 #TOOLPREFIX = 
@@ -152,43 +160,22 @@ GDBPORT = $(shell expr `id -u` % 5000 + 25000)
 QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
 	then echo "-gdb tcp::$(GDBPORT)"; \
 	else echo "-s -p $(GDBPORT)"; fi)
-ifndef CPUS
-CPUS := 3
-endif
 
-QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
+# Memory (MB) per memory node
+MEM_PER_NODE := 128
+
+iter_nodes = $(shell seq 0 $$(expr $(NODES) - 1))
+mem_total = $(shell expr $(MEM_PER_NODE) \* $(NODES))
+
+QEMUOPTS = -machine virt -bios none -kernel $K/kernel -nographic
+QEMUOPTS += -m $(mem_total)M,slots=$(NODES),maxmem=$(shell expr 2 \* $(mem_total))M -smp $(CPUS)
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
-
-#[numa] NUMA-specific options for 2 NUMA nodes. A few are identical to non NUMA, but:
-#* specify memory has 2 slots, and the SMP capability has $(CPUS) cores
-#* add memory backend objects, i.e., memory nodes
-#* add 2 NUMA nodes, CPUs are split between even and odd IDs
-
-# cpus_for_node node_id: produce CPU IDs for the given NUMA node
-# This is a macro where $(1) expands to the node ID.
-# Hardcoded for exactly 2 NUMA nodes (the hard 2 in the macro).
-cpus_for_node = $(shell \
-				for n in $$(seq 0 $$(expr $(CPUS) - 1)); do\
-					if [ $$(expr $$n % 2) -eq $(1) ]; then\
-						echo $$n;\
-					fi\
-				done)
-
-QEMU_NUMAOPTS = -machine virt -bios none -kernel $K/kernel -nographic
-QEMU_NUMAOPTS += -m 128M,slots=2,maxmem=256M -smp cores=$(CPUS)
-QEMU_NUMAOPTS += -drive file=fs.img,if=none,format=raw,id=x0
-QEMU_NUMAOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
-QEMU_NUMAOPTS += -object memory-backend-ram,size=64M,id=mem0
-QEMU_NUMAOPTS += -object memory-backend-ram,size=64M,id=mem1
-QEMU_NUMAOPTS += -numa node,nodeid=0,memdev=mem0,cpus=$(call cpus_for_node,0)
-QEMU_NUMAOPTS += -numa node,nodeid=1,memdev=mem1,cpus=$(call cpus_for_node,1)
+QEMUOPTS += $(foreach n,$(iter_nodes),-object memory-backend-ram,size=$(MEM_PER_NODE)M,id=mem$(n))
+QEMUOPTS += $(foreach n,$(iter_nodes),-numa node,nodeid=$(n),memdev=mem$(n))
 
 qemu: $K/kernel fs.img
 	$(QEMU) $(QEMUOPTS)
-
-qemu-numa: $K/kernel fs.img
-	$(QEMU) $(QEMU_NUMAOPTS)
 
 .gdbinit: .gdbinit.tmpl-riscv
 	sed "s/:1234/:$(GDBPORT)/" < $^ > $@
@@ -196,7 +183,3 @@ qemu-numa: $K/kernel fs.img
 qemu-gdb: $K/kernel .gdbinit fs.img
 	@echo "*** Now run 'gdb' in another window." 1>&2
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
-
-qemu-numa-gdb: $K/kernel .gdbinit fs.img
-	@echo "*** Now run 'gdb' in another window." 1>&2
-	$(QEMU) $(QEMU_NUMAOPTS) -S $(QEMUGDB)
