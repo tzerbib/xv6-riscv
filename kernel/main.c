@@ -14,6 +14,7 @@ main()
     consoleinit();
     printfinit();
     printf("\n");
+    printf("xv6 kernel is configured for %d sockets and %d harts\n", NB_SOCKETS, NB_HARTS);
     printf("xv6 kernel is booting on hart %d\n", cpuid());
     printf("\n");
     kinit();         // physical page allocator

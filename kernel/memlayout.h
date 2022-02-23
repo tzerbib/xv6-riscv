@@ -27,12 +27,19 @@
 
 //[numa]XXX For now, we don't know how to discover the number of harts and
 // sockets, and how they are mapped to each other.
-// Macros below assume assigning harts to sockets in round-robin.
-#define NB_SOCKETS 2
+// Macros below assume assigning harts as qemu does it when the number of harts
+// per socket is a power of 2 (and the same for all sockets).
+#ifndef NB_SOCKETS
+#define NB_SOCKETS 1
+#endif
+//[numa] Total number of harts (not the number of harts per socket)
+#ifndef NB_HARTS
 #define NB_HARTS 2
+#endif
 
-#define HART_SOCKETID(hartid) (hartid)%NB_SOCKETS
-#define HARTID_IN_SOCKET(hartid) (hartid)/NB_SOCKETS
+#define NB_HARTS_PER_SOCKET (NB_HARTS/NB_SOCKETS)
+#define HART_SOCKETID(hartid) ((hartid)/NB_HARTS_PER_SOCKET)
+#define HARTID_IN_SOCKET(hartid) ((hartid)-HART_SOCKETID(hartid)*NB_HARTS_PER_SOCKET)
 
 // core local interruptor (CLINT), which contains the timer.
 //[numa] There is one CLINT per NUMA socket.
