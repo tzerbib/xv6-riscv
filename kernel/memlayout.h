@@ -6,8 +6,8 @@
 // 00001000 -- boot ROM, provided by qemu
 // 02000000 -- CLINT
 // 0C000000 -- PLIC
-// 10000000 -- uart0 
-// 10001000 -- virtio disk 
+// 10000000 -- uart0
+// 10001000 -- virtio disk
 // 80000000 -- boot ROM jumps here in machine mode
 //             -kernel loads the kernel here
 // unused RAM after 80000000.
@@ -43,8 +43,12 @@
 
 // the kernel expects there to be RAM
 // for use by the kernel and user pages
-// from physical address 0x80000000 to PHYSTOP.
-#define KERNBASE 0x80000000L
+// from physical address KERNBASE to PHYSTOP.
+// The OpenSBI firmware is at 0x80000000 (RAM start).
+// It should have been built to jump at the same KERNBASE address.
+#ifndef KERNBASE
+#define KERNBASE 0x80200000L
+#endif
 #define PHYSTOP (KERNBASE + 128*1024*1024)
 
 // map the trampoline page to the highest address,

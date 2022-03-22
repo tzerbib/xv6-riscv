@@ -1,6 +1,9 @@
 K=kernel
 U=user
 
+OPENSBI=opensbi
+OPENSBI_FW_JUMP=$(OPENSBI)/build/platform/generic/firmware/fw_jump.bin
+
 OBJS = \
   $K/entry.o \
   $K/start.o \
@@ -32,6 +35,10 @@ OBJS = \
   $K/acpi.o \
   $K/topology.o \
   $K/ipi.o \
+
+ifndef KERNBASE
+	KERNBASE=0x80200000
+endif
 
 # riscv64-unknown-elf- or riscv64-linux-gnu-
 # perhaps in /opt/riscv/bin
@@ -65,6 +72,7 @@ CFLAGS += -mcmodel=medany
 CFLAGS += -ffreestanding -fno-common -nostdlib -mno-relax
 CFLAGS += -I.
 CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
+CFLAGS += -DKERNBASE=$(KERNBASE)
 
 # Disable PIE when possible (for Ubuntu 16.10 toolchain)
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]no-pie'),)
@@ -74,7 +82,9 @@ ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]nopie'),)
 CFLAGS += -fno-pie -nopie
 endif
 
-LDFLAGS = -z max-page-size=4096
+LDFLAGS = -z max-page-size=4096 -Ttext $(KERNBASE)
+
+.PHONY: clean $(OPENSBI_FW_JUMP)
 
 $K/kernel: $(OBJS) $K/kernel.ld $U/initcode
 	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) 
@@ -162,9 +172,8 @@ ifndef MEMORY
 MEMORY := 512M
 endif
 
-QEMUOPTS = -machine virt -m $(MEMORY) -smp $(CPUS) -nographic
-QEMUOPTS += -bios none
-QEMUOPTS += -kernel $K/kernel
+QEMUOPTS = -machine virt -bios $(OPENSBI_FW_JUMP) -kernel $K/kernel -nographic
+QEMUOPTS += -m $(MEMORY) -smp $(CPUS)
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 QEMUOPTS += -object memory-backend-ram,id=m0,size=256M
@@ -172,13 +181,16 @@ QEMUOPTS += -object memory-backend-ram,id=m1,size=256M
 QEMUOPTS += -numa node,memdev=m0,cpus=0,nodeid=0
 QEMUOPTS += -numa node,memdev=m1,cpus=1-2,nodeid=1
 
-qemu: $K/kernel fs.img
+$(OPENSBI_FW_JUMP):
+	CROSS_COMPILE=$(TOOLPREFIX) $(MAKE) -C $(OPENSBI) PLATFORM=generic FW_JUMP=y FW_JUMP_ADDR=$(KERNBASE)
+
+qemu: $K/kernel fs.img $(OPENSBI_FW_JUMP)
 	$(QEMU) $(QEMUOPTS)
 
 .gdbinit: .gdbinit.tmpl-riscv
 	sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 
-qemu-gdb: $K/kernel .gdbinit fs.img
+qemu-gdb: $K/kernel .gdbinit fs.img $(OPENSBI_FW_JUMP)
 	@echo "*** Now run 'gdb' in another window on port $(GDBPORT)." 1>&2
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
 
