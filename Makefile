@@ -1,6 +1,9 @@
 K=kernel
 U=user
 
+OPENSBI=opensbi
+OPENSBI_FW_JUMP=$(OPENSBI)/build/platform/generic/firmware/fw_jump.bin
+
 OBJS = \
   $K/entry.o \
   $K/start.o \
@@ -38,6 +41,10 @@ ifndef NODES
 NODES := 1
 endif
 
+ifndef KERNBASE
+	KERNBASE=0x80200000
+endif
+
 # riscv64-unknown-elf- or riscv64-linux-gnu-
 # perhaps in /opt/riscv/bin
 #TOOLPREFIX = 
@@ -72,6 +79,7 @@ CFLAGS += -Wno-infinite-recursion
 CFLAGS += -I.
 CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
 CFLAGS += -DNB_SOCKETS=$(NODES) -DNB_HARTS=$(CPUS)
+CFLAGS += -DKERNBASE=$(KERNBASE)
 
 # Disable PIE when possible (for Ubuntu 16.10 toolchain)
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]no-pie'),)
@@ -81,7 +89,9 @@ ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]nopie'),)
 CFLAGS += -fno-pie -nopie
 endif
 
-LDFLAGS = -z max-page-size=4096
+LDFLAGS = -z max-page-size=4096 -Ttext $(KERNBASE)
+
+.PHONY: clean $(OPENSBI_FW_JUMP)
 
 $K/kernel: $(OBJS) $K/kernel.ld $U/initcode
 	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) 
@@ -169,19 +179,22 @@ MEM_PER_NODE := 128
 iter_nodes = $(shell seq 0 $$(expr $(NODES) - 1))
 mem_total = $(shell expr $(MEM_PER_NODE) \* $(NODES))
 
-QEMUOPTS = -machine virt -bios none -kernel $K/kernel -nographic
+QEMUOPTS = -machine virt -bios $(OPENSBI_FW_JUMP) -kernel $K/kernel -nographic
 QEMUOPTS += -m $(mem_total)M,slots=$(NODES),maxmem=$(shell expr 2 \* $(mem_total))M -smp $(CPUS)
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 QEMUOPTS += $(foreach n,$(iter_nodes),-object memory-backend-ram,size=$(MEM_PER_NODE)M,id=mem$(n))
 QEMUOPTS += $(foreach n,$(iter_nodes),-numa node,nodeid=$(n),memdev=mem$(n))
 
-qemu: $K/kernel fs.img
+$(OPENSBI_FW_JUMP):
+	CROSS_COMPILE=$(TOOLPREFIX) $(MAKE) -C $(OPENSBI) PLATFORM=generic FW_JUMP=y FW_JUMP_ADDR=$(KERNBASE)
+
+qemu: $K/kernel fs.img $(OPENSBI_FW_JUMP)
 	$(QEMU) $(QEMUOPTS)
 
 .gdbinit: .gdbinit.tmpl-riscv
 	sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 
-qemu-gdb: $K/kernel .gdbinit fs.img
-	@echo "*** Now run 'gdb' in another window." 1>&2
+qemu-gdb: $K/kernel .gdbinit fs.img $(OPENSBI_FW_JUMP)
+	@echo "*** Now run 'gdb' in another window on port $(GDBPORT)." 1>&2
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
