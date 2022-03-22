@@ -22,6 +22,26 @@ struct {
 }numa_allocator;
 
 
+#define FDT_MAGIC      0xd00dfeed
+#define FDT_BEGIN_NODE 0x00000001
+#define FDT_END_NODE   0x00000002
+#define FDT_PROP       0x00000003
+#define FDT_NOP        0x00000004
+#define FDT_END        0x00000009
+
+struct fdt_header {
+  uint32_t magic;
+  uint32_t totalsize;
+  uint32_t off_dt_struct;
+  uint32_t off_dt_strings;
+  uint32_t off_mem_rsvmap;
+  uint32_t version;
+  uint32_t last_comp_version;
+  uint32_t boot_cpuid_phys;
+  uint32_t size_dt_strings;
+  uint32_t size_dt_struct;
+};
+
 
 // Ensure that there is enought space for a structure to be added
 void ensure_space(uint64_t length){
@@ -170,8 +190,144 @@ void* add_memrange(uint32_t domain_id, void* start, uint64_t length){
 }
 
 
+
+// Return the value in big endian of a pointer to a 32 bit value in little endian.
+static inline uint32_t littleToBigEndian32(const uint32_t *p)
+{
+  const uint8_t *bp = (const uint8_t *)p;
+
+  return ((uint32_t)bp[0] << 24)
+    | ((uint32_t)bp[1] << 16)
+    | ((uint32_t)bp[2] << 8)
+    | bp[3];
+}
+
+
+static inline void print_fd_string(char* s){
+  while(*s){
+    printf("%c", *s++);
+  }
+}
+
+
+static inline void pretty_spacing(int ctr){
+  for(int i=0; i<ctr; i++){
+    printf("\t");
+  }
+}
+
+void print_dt_struct(void* begin, uint32_t size, void* strings){
+  int tab_ctr = 0;
+  
+  uint32_t* i = begin;
+
+  
+  for(; (char*)i < (char*)begin+size; i++){
+    // Ensure token 4-byte alignment
+    while((uint64_t)i % 4){i=(uint32_t*)((char*)i+1);}
+
+    // printf("Try to read %p\n", i);
+
+    switch(littleToBigEndian32(i)){
+      case FDT_NOP:
+        pretty_spacing(tab_ctr);
+        printf("NOP\n");
+        break;
+      
+      case FDT_BEGIN_NODE:
+        pretty_spacing(tab_ctr);
+        printf("BEGIN NODE ");
+        tab_ctr++;
+
+        // Print node name
+        char* c;
+        for(c = (char*)(i+1); *c; c++) printf("%c", *c);
+        printf("\n");
+        
+        // Align on a 4-byte boundary
+        // while((uint64_t)c % 4){c = (char*)c+1;};
+        i = (uint32_t*)(c+1) - 1;
+        break;
+      
+      case FDT_PROP:
+        pretty_spacing(tab_ctr);
+        printf("PROPERTY ");
+        
+        // Print property name
+        print_fd_string((char*)strings+littleToBigEndian32(i+2));
+        printf(" (0x%x bytes)\n", littleToBigEndian32(i+1));
+        
+        // Skip property content
+        i = (uint32_t*)((char*)i + 8 + littleToBigEndian32(i+1));
+        break;
+      
+      case FDT_END_NODE: 
+        tab_ctr--;
+        pretty_spacing(tab_ctr);
+        printf("END NODE\n");
+        break;
+
+      case FDT_END:
+        // Check bt size integrity
+        if(i+1 != begin+size){
+            printf("i+1 (%p) != end (%p)\n", i+1, begin+size);
+            panic("Should be the end of FDT!");
+        }
+        break;
+      
+      default: {
+        printf("in FDT, token %p not found\n", littleToBigEndian32(i));
+        panic("");
+      }
+    }
+  }
+
+}
+
+
+void
+freerange(void *pa_dtb)
+{
+  const struct fdt_header *fdt = pa_dtb;
+
+  // Check magic number
+  uint32_t magic = littleToBigEndian32(&fdt->magic);
+  if(magic != FDT_MAGIC){
+    printf("given %p, expected %p\n", magic, FDT_MAGIC);
+    panic("freerange: given address is not pointing to a FDT");
+  }
+  printf("FDT found at %p\n", pa_dtb);
+
+  void* fd_struct = (void*)((char*)fdt) + littleToBigEndian32(&fdt->off_dt_struct);
+  void* fd_strings = (void*)((char*)fdt + littleToBigEndian32(&fdt->off_dt_strings));
+  printf("struct offset %d\n", littleToBigEndian32(&fdt->off_dt_struct));
+
+  print_dt_struct(fd_struct, littleToBigEndian32(&fdt->size_dt_struct), fd_strings);
+
+  panic("end of func");
+
+
+  // char *p;
+  // p = (char*)PGROUNDUP((uint64)pa_start);
+  // for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+  //   kfree(p);
+}
+
+
 // Add a numa topology given by a SRAT table to the machine description
-void add_numa(void* ptr){
+void add_numa(const void* ptr){
+  /* The device tree must be at an 8-byte aligned address */
+  if ((uintptr_t)ptr & 7)
+    panic("FDT is not 8-byte aligned");
+  
+  printf("DTB is located at %p\n", ptr);
+
+  const struct fdt_header *fdt = ptr;
+  printf("Magic:    %p\nReversed: %p\n", fdt->magic, (littleToBigEndian32(&((const struct fdt_header *)(ptr))->magic)));
+  
+  printf("\n");
+  panic("Everything's fine... I hope");
+
   struct SRAT* srat = (struct SRAT*) ptr;
   uint8_t* curr = ((uint8_t*)srat) + sizeof(struct SRAT);
 
@@ -268,6 +424,7 @@ void* kalloc_numa(void){
       if(r)
         break;
     }
+
     // Print when a memory allocation is performed in another domain
     // printf(
     //   "freepage %p asked by domain %d, found in domain %d\n",
@@ -294,7 +451,7 @@ void add_missing_pages(void){
 
     printf("%p", r);
     for(ctr=0; r + PGSIZE <= stop; r+=PGSIZE){
-      // Avoid some specific addresses
+      // Avoid some risc-V specific addresses
       if((r >= (char*)UART0 && r < (char*)UART0+PGSIZE)
       || (r >= (char*)VIRTIO0 && r < (char*)VIRTIO0+PGSIZE)
       || (r >= (char*)PLIC && r < (char*)PLIC+0x400000)){
@@ -308,16 +465,41 @@ void add_missing_pages(void){
       kfree_numa(r);
       ++ctr;
     }
-    printf(" -- %p (< %p), added %d pages\n", r, stop, ctr);
+    printf(" -- %p (< %p), added %d pages\n", memend, stop, ctr);
 
 
     // Add all addresses greater than the kernel to the domain freepage list
-    printf("%p", r);
+    printf("%p", m->start);
     for(r=(char*)PHYSTOP, ctr=0; r + PGSIZE <= memend ; r+=PGSIZE){
       // Avoid some specific addresses
       if(r >= (char*)TRAMPOLINE && r < (char*)TRAMPOLINE+PGSIZE){
         continue;
       }
+
+
+
+      // *r = 42;
+      // printf("*(%p) = %d\n", r, *r);
+
+      // struct domain* curr_dom;
+      // struct run *curr_pg;
+
+      // for(curr_dom=machine->all_domains; curr_dom; curr_dom=curr_dom->all_next){
+        // printf("%p in domain %d\n", r, curr_dom->domain_id);
+      //   curr_pg = curr_dom->freepages.freelist;
+      //   while(curr_pg){
+      //     // printf("Check %p\n", curr_pg);
+      //     if((void*)curr_pg == r){
+      //       printf("For page %p\n", curr_pg);
+      //       panic("Page freed twice");
+      //     }
+      //     curr_pg = curr_pg->next;
+      //   }
+      // }
+
+
+
+
       // Map upper pages
       kvmmap(kernel_pagetable, (uint64)r, (uint64)r, PGSIZE, PTE_R | PTE_W);
 
@@ -325,7 +507,7 @@ void add_missing_pages(void){
       kfree_numa(r);
       ++ctr;
     }
-    printf(" -- %p (> %p), added %d pages\n", r, (char*)PHYSTOP, ctr);
+    printf(" -- %p (> %p), added %d pages\n", memend, (char*)PHYSTOP, ctr);
   }
 }
 
@@ -352,6 +534,8 @@ void assign_freepages(){
         ++ctr;
       }
     }
+    printf("From old numa topology, extracted %d pages\n", ctr);
+
     return;
   }
   
@@ -429,8 +613,9 @@ void print_topology(){
     }
 
     // Browse all freepages of a given domain
-    for(ctr=0, curr_pg=curr_dom->freepages.freelist; curr_pg; ctr++, curr_pg=curr_pg->next);
-    printf("\t\t     There are %d free pages associated with this domain\n", ctr);
+    for(ctr=0, curr_pg=curr_dom->freepages.freelist; curr_pg; ++ctr, curr_pg=curr_pg->next);
+    printf("(%p) There are %d free pages associated with this domain\n",
+           curr_dom->freepages.freelist, ctr);
 
     printf("\n");
   }
@@ -456,14 +641,16 @@ void print_struct_machine_loc(){
 void free_machine(){
   uint64_t* next = (uint64_t*) PGROUNDDOWN((uint64_t)old_machine);
   uint64_t* tmp;
+  unsigned int ctr = 0;
 
   while(next){
     tmp = (uint64_t*)(*next);
     kfree(next);
     next = tmp;
-  }
-  for(; next; ){
+    ctr++;
   }
 
   old_machine = 0;
+
+  printf("From old internal struct, freed       %d pages\n", ctr);
 }

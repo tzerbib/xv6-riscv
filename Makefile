@@ -31,6 +31,7 @@ OBJS = \
   $K/virtio_disk.o \
   $K/acpi.o \
   $K/topology.o \
+  $K/ipi.o \
 
 # riscv64-unknown-elf- or riscv64-linux-gnu-
 # perhaps in /opt/riscv/bin
@@ -58,7 +59,7 @@ LD = $(TOOLPREFIX)ld
 OBJCOPY = $(TOOLPREFIX)objcopy
 OBJDUMP = $(TOOLPREFIX)objdump
 
-CFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb
+CFLAGS = -Wall -Werror -g -fno-omit-frame-pointer -ggdb
 CFLAGS += -MD
 CFLAGS += -mcmodel=medany
 CFLAGS += -ffreestanding -fno-common -nostdlib -mno-relax
@@ -161,7 +162,9 @@ ifndef MEMORY
 MEMORY := 512M
 endif
 
-QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m $(MEMORY) -smp $(CPUS) -nographic
+QEMUOPTS = -machine virt -m $(MEMORY) -smp $(CPUS) -nographic
+QEMUOPTS += -bios none
+QEMUOPTS += -kernel $K/kernel
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 QEMUOPTS += -object memory-backend-ram,id=m0,size=256M

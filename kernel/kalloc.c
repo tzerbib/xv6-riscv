@@ -10,32 +10,25 @@
 #include "defs.h"
 #include "kalloc.h"
 
-void freerange(void *pa_start, void *pa_end);
+
+void freerange(void *pa_dtb);
+extern void* kalloc_numa(void);
+extern void kfree_numa(void*);
+char numa_ready = 0;
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
 struct kmem kmem;
 
-extern void* kalloc_numa(void);
-extern void kfree_numa(void*);
-char numa_ready = 0;
 
 void
-kinit()
+kinit(void* pa_dtb)
 {
   initlock(&kmem.lock, "kmem");
-  freerange(end, (void*)PHYSTOP);
+  freerange(pa_dtb);
 }
 
-void
-freerange(void *pa_start, void *pa_end)
-{
-  char *p;
-  p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
-    kfree(p);
-}
 
 // Free the page of physical memory pointed at by v,
 // which normally should have been returned by a

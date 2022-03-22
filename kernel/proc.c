@@ -6,7 +6,7 @@
 #include "proc.h"
 #include "defs.h"
 
-struct cpu cpus[NCPU];
+struct cpu cpus[NCPU];    // No repplication
 
 struct proc proc[NPROC];
 

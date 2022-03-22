@@ -62,7 +62,7 @@ void            ramdiskrw(struct buf*);
 // kalloc.c
 void*           kalloc(void);
 void            kfree(void *);
-void            kinit(void);
+void            kinit(void*);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -197,11 +197,15 @@ void* init_SRAT(void);
 void print_srat(void*);
 
 // topology.c
-void init_topology();
-void finalize_topology();
-void add_numa(void*);
+void init_topology(void);
+void finalize_topology(void);
+void add_numa(const void*);
 void print_topology(void);
 void assign_freepages(void);
-void free_machine();
+void free_machine(void);
 void print_struct_machine_loc(void);
 
+// ipi.c
+void sbi_get_spec_version(void);
+void sbi_start_hart(const unsigned long, unsigned long, unsigned long);
+void sbi_send_ipi(const unsigned long*);
