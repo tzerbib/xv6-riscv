@@ -30,9 +30,6 @@ main(unsigned long hartid, unsigned long dtb_pa)
   w_sie(r_sie() | SIE_SEIE | SIE_STIE | SIE_SSIE);
 
   if(dtb_pa != 0){
-    // initialize BSS section
-    memset(&__bss_start, 0, (&__bss_end)-(&__bss_start));
-
     consoleinit();
     printfinit();
     printf("\n");

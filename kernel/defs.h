@@ -192,10 +192,6 @@ void            virtio_disk_intr(void);
 // End of original xv6
 ////////////////////////////////////////////////////////////////////////////////
 
-// acpi.c
-void* init_SRAT(void);
-void print_srat(void*);
-
 // topology.c
 void init_topology(void);
 void finalize_topology(void);
