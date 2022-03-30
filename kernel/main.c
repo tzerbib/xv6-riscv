@@ -9,8 +9,6 @@ volatile static int started = 0;
 extern char __bss_start; // kernel.ld sets this to begin of BSS section
 extern char __bss_end; // kernel.ld sets this to end of BSS section
 
-#define S_TOPO 3
-unsigned long topo[S_TOPO] = {0,1,2};
 extern void _entry(unsigned long hartid, unsigned long dtb_pa);
 
 // keep each CPU's hartid in its tp register, for cpuid().
@@ -38,7 +36,8 @@ main(unsigned long hartid, unsigned long dtb_pa)
     consoleinit();
     printfinit();
     printf("\n");
-    printf("xv6 kernel is booting\n");
+    printf("xv6 kernel is configured for %d sockets and %d harts\n", NB_SOCKETS, NB_HARTS);
+    printf("xv6 kernel is booting on hart %d\n", cpuid());
     printf("\n");
     kinit((void*) dtb_pa);         // physical page allocator
     kvminit();       // create kernel page table
@@ -85,7 +84,7 @@ main(unsigned long hartid, unsigned long dtb_pa)
     userinit();      // first user process
 
     // Waik up all other cores by sending an ipi to them
-    for(int i = 0; i < S_TOPO; i++){
+    for(int i = 0; i < NB_HARTS; i++){
       if(i == hartid) continue;
       sbi_start_hart(i, (unsigned long)&_entry, 0);
     }

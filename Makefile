@@ -33,6 +33,14 @@ OBJS = \
   $K/topology.o \
   $K/ipi.o \
 
+ifndef CPUS
+CPUS := 3
+endif
+
+ifndef NODES
+NODES := 1
+endif
+
 # riscv64-unknown-elf- or riscv64-linux-gnu-
 # perhaps in /opt/riscv/bin
 #TOOLPREFIX = 
@@ -65,6 +73,7 @@ CFLAGS += -mcmodel=medany
 CFLAGS += -ffreestanding -fno-common -nostdlib -mno-relax
 CFLAGS += -I.
 CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
+CFLAGS += -DNB_SOCKETS=$(NODES) -DNB_HARTS=$(CPUS)
 
 # Disable PIE when possible (for Ubuntu 16.10 toolchain)
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]no-pie'),)
@@ -155,22 +164,19 @@ GDBPORT = $(shell expr `id -u` % 5000 + 25000)
 QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
 	then echo "-gdb tcp::$(GDBPORT)"; \
 	else echo "-s -p $(GDBPORT)"; fi)
-ifndef CPUS
-CPUS := 3
-endif
-ifndef MEMORY
-MEMORY := 512M
-endif
 
-QEMUOPTS = -machine virt -m $(MEMORY) -smp $(CPUS) -nographic
-QEMUOPTS += -bios none
-QEMUOPTS += -kernel $K/kernel
+# Memory (MB) per memory node
+MEM_PER_NODE := 128
+
+iter_nodes = $(shell seq 0 $$(expr $(NODES) - 1))
+mem_total = $(shell expr $(MEM_PER_NODE) \* $(NODES))
+
+QEMUOPTS = -machine virt -bios none -kernel $K/kernel -nographic
+QEMUOPTS += -m $(mem_total)M,slots=$(NODES),maxmem=$(shell expr 2 \* $(mem_total))M -smp $(CPUS)
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
-QEMUOPTS += -object memory-backend-ram,id=m0,size=256M
-QEMUOPTS += -object memory-backend-ram,id=m1,size=256M
-QEMUOPTS += -numa node,memdev=m0,cpus=0,nodeid=0
-QEMUOPTS += -numa node,memdev=m1,cpus=1-2,nodeid=1
+QEMUOPTS += $(foreach n,$(iter_nodes),-object memory-backend-ram,size=$(MEM_PER_NODE)M,id=mem$(n))
+QEMUOPTS += $(foreach n,$(iter_nodes),-numa node,nodeid=$(n),memdev=mem$(n))
 
 qemu: $K/kernel fs.img
 	$(QEMU) $(QEMUOPTS)
@@ -181,4 +187,3 @@ qemu: $K/kernel fs.img
 qemu-gdb: $K/kernel .gdbinit fs.img
 	@echo "*** Now run 'gdb' in another window on port $(GDBPORT)." 1>&2
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
-
