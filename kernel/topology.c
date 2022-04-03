@@ -61,11 +61,11 @@ void ensure_space(uint64_t length){
 
     if(wip_machine){
       // Make old page point to new page
-      *((uint64_t*)PGROUNDDOWN((uint64_t)old_page)) = (uint64_t) numa_allocator.topology_end;
+      *((ptr_t*)PGROUNDDOWN((ptr_t)old_page)) = (ptr_t) numa_allocator.topology_end;
     }
     
     // Initialize next page address at NULL
-    *((uint64_t*)numa_allocator.topology_end) = 0;
+    *((ptr_t*)numa_allocator.topology_end) = 0;
     numa_allocator.topology_end += sizeof(void*);
     numa_allocator.remaining = PGSIZE - sizeof(void*);
   }
@@ -228,7 +228,7 @@ void* skip_fd_node(uint32_t* i){
 
   for(;; i++){
     // Ensure alignment
-    while((uint64_t)i%4) {i=(uint32_t*)((char*)i+1);}
+    while((ptr_t)i%4) {i=(uint32_t*)((char*)i+1);}
 
     switch(bigToLittleEndian32(i)){
       case FDT_NOP:
@@ -280,7 +280,7 @@ char get_prop(void* begin, void* strings, char* prop, uint size, uint32_t* buf){
 
   for(;; i++){
     // Ensure alignment
-    while((uint64_t)i%4) {i=(uint32_t*)((char*)i+1);}
+    while((ptr_t)i%4) {i=(uint32_t*)((char*)i+1);}
 
     switch(bigToLittleEndian32(i)){
       case FDT_NOP:
@@ -402,7 +402,7 @@ uint32_t* print_dt_node(void* start, void* end, void* strings, uint tab_ctr, int
 
   for(; i < (uint32_t*)end; i++){
     // Ensure token 4-byte alignment
-    while((uint64_t)i%4) {i=(uint32_t*)((char*)i+1);}
+    while((ptr_t)i%4) {i=(uint32_t*)((char*)i+1);}
 
     switch(bigToLittleEndian32(i)){
       case FDT_NOP:
@@ -477,7 +477,7 @@ __freerange(void* start, void* dtb_start, void* dtb_end, void* strings, uint32_t
 
   for(; i < (uint32_t*)dtb_end; i++){
     // Ensure token 4-byte alignment
-    while((uint64_t)i%4) {i=(uint32_t*)((char*)i+1);}
+    while((ptr_t)i%4) {i=(uint32_t*)((char*)i+1);}
 
     switch(bigToLittleEndian32(i)){
       case FDT_NOP:
@@ -493,14 +493,14 @@ __freerange(void* start, void* dtb_start, void* dtb_end, void* strings, uint32_t
         if(allocate && !memcmp(FDT_REG, prop_name, sizeof(FDT_REG))){
           int size = bigToLittleEndian32(i+1);
           for(int k=0; k<size/(4*(ac+sc)); k++){
-            uint64_t addr = 0;
-            uint64_t range = 0;
+            ptr_t addr = 0;
+            ptr_t range = 0;
             for(int j=0; j<ac;j++){
-              addr |= ((uint64_t)bigToLittleEndian32((i+1)+2+k*(ac+sc)+j)) << 32*(ac-j-1);
+              addr |= ((ptr_t)bigToLittleEndian32((i+1)+2+k*(ac+sc)+j)) << 32*(ac-j-1);
             }
             
             for(int j=0; j<sc;j++){
-              range |= (uint64_t)(bigToLittleEndian32((i+1)+2+k*(ac+sc)+ac+j)) << 32*(sc-j-1);
+              range |= (ptr_t)(bigToLittleEndian32((i+1)+2+k*(ac+sc)+ac+j)) << 32*(sc-j-1);
             }
 
             range += addr;
@@ -602,8 +602,8 @@ void add_numa(const void* ptr){
         struct SRAT_mem_struct* memrange = (struct SRAT_mem_struct*)curr;
         if(!memrange->flags){break;}
         uint32_t domain_id = memrange->domain;
-        uint64_t addr = ((uint64_t)memrange->hi_base << 32) + memrange->lo_base;
-        uint64_t length = ((uint64_t)memrange->hi_length << 32) + memrange->lo_length;
+        ptr_t addr = ((uint64_t)memrange->hi_base << 32) + memrange->lo_base;
+        ptr_t length = ((uint64_t)memrange->hi_length << 32) + memrange->lo_length;
         add_memrange(domain_id, (void*)addr, length);
         break;
       }
@@ -876,7 +876,7 @@ void print_topology(){
 
 
 void print_struct_machine_loc(){
-  uint64_t* next = (uint64_t*) PGROUNDDOWN((uint64_t)machine);
+  ptr_t* next = (ptr_t*) PGROUNDDOWN((ptr_t)machine);
   uint32_t domain;
 
   printf("Topology structure in memory:\n");
@@ -885,19 +885,19 @@ void print_struct_machine_loc(){
   while(next){
     domain = ((struct memrange*)find_memrange(machine, next))->domain->domain_id;
     printf(" -> %p (%d)", next, domain);
-    next = (uint64_t*)(*next);
+    next = (ptr_t*)(*next);
   }
   printf(" -> 0\n");
 }
 
 
 void free_machine(){
-  uint64_t* next = (uint64_t*) PGROUNDDOWN((uint64_t)old_machine);
-  uint64_t* tmp;
+  ptr_t* next = (ptr_t*) PGROUNDDOWN((ptr_t)old_machine);
+  ptr_t* tmp;
   unsigned int ctr = 0;
 
   while(next){
-    tmp = (uint64_t*)(*next);
+    tmp = (ptr_t*)(*next);
     kfree(next);
     next = tmp;
     ctr++;
