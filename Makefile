@@ -74,7 +74,7 @@ LD = $(TOOLPREFIX)ld
 OBJCOPY = $(TOOLPREFIX)objcopy
 OBJDUMP = $(TOOLPREFIX)objdump
 
-CFLAGS = -Wall -Werror -g -fno-omit-frame-pointer -ggdb
+CFLAGS = -Wall -Werror -Og -fno-omit-frame-pointer -ggdb
 CFLAGS += -MD
 CFLAGS += -mcmodel=medany
 CFLAGS += -ffreestanding -fno-common -nostdlib -mno-relax
@@ -176,7 +176,7 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
 	else echo "-s -p $(GDBPORT)"; fi)
 
 # Memory (MB) per memory node
-MEM_PER_NODE := 128
+MEM_PER_NODE := 32
 iter_nodes    = $(shell seq 0 $$(expr $(NODES) - 1))
 mem_total     = $(shell expr $(MEM_PER_NODE) \* $(NODES))
 

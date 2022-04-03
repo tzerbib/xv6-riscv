@@ -44,7 +44,7 @@ main(unsigned long hartid, unsigned long dtb_pa)
     // char* srat = init_SRAT();
     // print_srat(srat);
     init_topology();
-    add_numa((void*) dtb_pa);
+    // add_numa((void*) dtb_pa);
     // finalize_topology();
     // assign_freepages();
     // printf("\n\n--- Computed topology (old kalloc): ---\n\n");

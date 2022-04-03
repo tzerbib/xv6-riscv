@@ -22,12 +22,20 @@ struct {
 }numa_allocator;
 
 
-#define FDT_MAGIC      0xd00dfeed
-#define FDT_BEGIN_NODE 0x00000001
-#define FDT_END_NODE   0x00000002
-#define FDT_PROP       0x00000003
-#define FDT_NOP        0x00000004
-#define FDT_END        0x00000009
+#define FDT_MAGIC           0xd00dfeed
+#define FDT_BEGIN_NODE      0x00000001
+#define FDT_END_NODE        0x00000002
+#define FDT_PROP            0x00000003
+#define FDT_NOP             0x00000004
+#define FDT_END             0x00000009
+
+#define FDT_ADDRESS_CELLS   "#address-cells"
+#define FDT_DFT_ADDR_CELLS  2
+#define FDT_SIZE_CELLS      "#size-cells"
+#define FDT_DFT_SIZE_CELLS  1
+#define FDT_PHANDLE         "phandle"
+#define FDT_REG             "reg"
+#define FDT_MEMORY          "memory@"
 
 struct fdt_header {
   uint32_t magic;
@@ -192,7 +200,7 @@ void* add_memrange(uint32_t domain_id, void* start, uint64_t length){
 
 
 // Return the value in big endian of a pointer to a 32 bit value in little endian.
-static inline uint32_t littleToBigEndian32(const uint32_t *p)
+static inline uint32_t bigToLittleEndian32(const uint32_t *p)
 {
   const uint8_t *bp = (const uint8_t *)p;
 
@@ -203,6 +211,119 @@ static inline uint32_t littleToBigEndian32(const uint32_t *p)
 }
 
 
+static inline void* skip_fd_prop(uint32_t* p){
+  // Skip property content
+  return (uint32_t*)((char*)p + 8 + bigToLittleEndian32(p+1));
+}
+
+
+// Return the address of the corresponding FDT_END_NODE token
+void* skip_fd_node(uint32_t* i){
+  // Skip node name
+  char* c;
+  for(c = (char*)(i+1); *c; c++);
+  
+  // Align on a 4-byte boundary
+  i = (uint32_t*)(c+1);
+
+  for(;; i++){
+    // Ensure alignment
+    while((uint64_t)i%4) {i=(uint32_t*)((char*)i+1);}
+
+    switch(bigToLittleEndian32(i)){
+      case FDT_NOP:
+        continue;
+        break;
+      
+      case FDT_BEGIN_NODE:
+        // Skip lower nodes
+        i = skip_fd_node(i);
+        break;
+      
+      case FDT_PROP:
+        i = skip_fd_prop(i);
+        break;
+      
+      case FDT_END_NODE: 
+        // Specified default value for #address-cells
+        return i;
+        break;
+
+      case FDT_END:
+        panic("in skip_fd_node: reached end of FDT");
+        break;
+      
+      default: {
+        printf("in skip_fd_node, token %p not found\n", bigToLittleEndian32(i));
+        panic("");
+      }
+    }
+  }
+}
+
+
+// Return the property value of the given node
+// begin should point to the begining of a node
+char get_prop(void* begin, void* strings, char* prop, uint size, uint32_t* buf){
+  // Check if begin points to a node
+  if(bigToLittleEndian32(begin) != FDT_BEGIN_NODE){
+    panic("in get_address_cells: begin should be the begining of a node");
+  }
+
+  // Skip node name
+  uint32_t* i = begin+1;
+  char* c;
+  for(c = (char*)(i+1); *c; c++);
+
+  // Align on a 4-byte boundary
+  i = (uint32_t*)(c+1);
+
+  for(;; i++){
+    // Ensure alignment
+    while((uint64_t)i%4) {i=(uint32_t*)((char*)i+1);}
+
+    switch(bigToLittleEndian32(i)){
+      case FDT_NOP:
+        continue;
+        break;
+      
+      case FDT_BEGIN_NODE:
+        // Skip lower nodes
+        i = skip_fd_node(i);
+        break;
+      
+      case FDT_PROP:
+        // Print property name
+        uint32_t* prop_name = (uint32_t*)((char*)strings+bigToLittleEndian32(i+2));
+
+        // Case prop_name == prop
+        if(!memcmp(prop_name, prop, size)){
+          *buf = bigToLittleEndian32(i+3);
+          return 1;
+        }
+        
+        i = skip_fd_prop(i);
+        break;
+      
+      case FDT_END_NODE: 
+        // Specified default value for #address-cells
+        return 0;
+        break;
+
+      case FDT_END:
+        panic("in get_address_cells: reached end of FDT");
+        break;
+      
+      default: {
+        printf("in get_address_cells, token %p not found\n", bigToLittleEndian32(i));
+        panic("");
+      }
+    }
+  }
+}
+
+
+// Print a string contained in the dtb
 static inline void print_fd_string(char* s){
   while(*s){
     printf("%c", *s++);
@@ -216,37 +337,81 @@ static inline void pretty_spacing(int ctr){
   }
 }
 
-void print_dt_struct(void* begin, uint32_t size, void* strings){
-  int tab_ctr = 0;
-  
-  uint32_t* i = begin;
 
+// Print content of some specific properties
+void print_interesting_prop(uint32_t* prop, uint32_t* prop_name, uint32_t ac, uint32_t sc){
+  // Case #address-cells
+  if(!memcmp(prop_name, FDT_ADDRESS_CELLS, sizeof(FDT_ADDRESS_CELLS))){
+    printf(": %d cells", bigToLittleEndian32(prop+2));
+  }
+
+  // Case #size-cells
+  else if(!memcmp(prop_name, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS))){
+    printf(": %d cells", bigToLittleEndian32(prop+2));
+  }
+
+  // Case phadle
+  else if(!memcmp(prop_name, FDT_PHANDLE, sizeof(FDT_PHANDLE))){
+    printf(": %d", bigToLittleEndian32(prop+2));
+  }
+
+  // Case reg
+  else if(!memcmp(prop_name, FDT_REG, sizeof(FDT_REG))){
+    printf(": ");
+    int size = bigToLittleEndian32(prop);
+    printf(" [s:%d ac:%d sc:%d r:%d] ", size, ac, sc, size/(4*(ac+sc)));
+    for(int i=0; i<size/(4*(ac+sc)); i++){
+      printf("< ");
+      // Print ac addresses
+      for(int j=0; j<ac;j++){
+        printf("0x%x ", bigToLittleEndian32(prop+2+i*(ac+sc)+j));
+      }
+      printf("; ");
+      // Print sc sizes
+      for(int j=0; j<sc;j++){
+        printf("0x%x ", bigToLittleEndian32(prop+2+i*(ac+sc)+ac+j));
+      }
+      printf("> ");
+    }
+    printf("\n");
+  }
+}
+
+
+uint32_t* print_dt_node(void* start, void* end, void* strings, uint tab_ctr, int ac, int sc){
+  // Set #address-cells and #size-cells for children
+  uint32_t new_ac = FDT_DFT_ADDR_CELLS;
+  uint32_t new_sc = FDT_DFT_SIZE_CELLS;
+  get_prop(start, strings, FDT_ADDRESS_CELLS, sizeof(FDT_ADDRESS_CELLS), &new_ac);
+  get_prop(start, strings, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS), &new_sc);
+
+  uint32_t* i = start;
+
+  // Initial begin node
+  pretty_spacing(tab_ctr);
+  printf("BEGIN NODE ");
+
+  // Print node name
+  char* c;
+  for(c = (char*)(i+1); *c; c++) printf("%c", *c);
+  printf("\n");
+  tab_ctr++;
   
-  for(; (char*)i < (char*)begin+size; i++){
+  // Align on a 4-byte boundary
+  i = (uint32_t*)(c+1);
+
+  for(; i < (uint32_t*)end; i++){
     // Ensure token 4-byte alignment
-    while((uint64_t)i % 4){i=(uint32_t*)((char*)i+1);}
+    while((uint64_t)i%4) {i=(uint32_t*)((char*)i+1);}
 
-    // printf("Try to read %p\n", i);
-
-    switch(littleToBigEndian32(i)){
+    switch(bigToLittleEndian32(i)){
       case FDT_NOP:
         pretty_spacing(tab_ctr);
         printf("NOP\n");
         break;
       
       case FDT_BEGIN_NODE:
-        pretty_spacing(tab_ctr);
-        printf("BEGIN NODE ");
-        tab_ctr++;
-
-        // Print node name
-        char* c;
-        for(c = (char*)(i+1); *c; c++) printf("%c", *c);
-        printf("\n");
-        
-        // Align on a 4-byte boundary
-        // while((uint64_t)c % 4){c = (char*)c+1;};
-        i = (uint32_t*)(c+1) - 1;
+        i = print_dt_node(i, end, strings, tab_ctr, new_ac, new_sc);
         break;
       
       case FDT_PROP:
@@ -254,34 +419,126 @@ void print_dt_struct(void* begin, uint32_t size, void* strings){
         printf("PROPERTY ");
         
         // Print property name
-        print_fd_string((char*)strings+littleToBigEndian32(i+2));
-        printf(" (0x%x bytes)\n", littleToBigEndian32(i+1));
+        uint32_t* prop_name = (uint32_t*)((char*)strings+bigToLittleEndian32(i+2));
+        print_fd_string((char*)prop_name);
+        
+        print_interesting_prop(i+1, prop_name, ac, sc);
+        printf("\n");
         
         // Skip property content
-        i = (uint32_t*)((char*)i + 8 + littleToBigEndian32(i+1));
+        i = skip_fd_prop(i);
         break;
       
-      case FDT_END_NODE: 
-        tab_ctr--;
-        pretty_spacing(tab_ctr);
+      case FDT_END_NODE:
+        pretty_spacing(tab_ctr-1);
         printf("END NODE\n");
-        break;
+        return i;
 
       case FDT_END:
         // Check bt size integrity
-        if(i+1 != begin+size){
-            printf("i+1 (%p) != end (%p)\n", i+1, begin+size);
+        if(i+1 != end){
+            printf("i+1 (%p) != end (%p)\n", i+1, end);
             panic("Should be the end of FDT!");
         }
         break;
       
       default: {
-        printf("in FDT, token %p not found\n", littleToBigEndian32(i));
+        printf("in FDT, token %p not found\n", bigToLittleEndian32(i));
         panic("");
       }
     }
   }
 
+  return end;
+}
+
+
+// Parse the DTB and allocate memory ranges according to "memory@<addr>" nodes.
+uint32_t*
+__freerange(void* start, void* dtb_start, void* dtb_end, void* strings, uint32_t ac, uint32_t sc){
+  // Set #address-cells and #size-cells for children
+  uint32_t new_ac = FDT_DFT_ADDR_CELLS;
+  uint32_t new_sc = FDT_DFT_SIZE_CELLS;
+  get_prop(start, strings, FDT_ADDRESS_CELLS, sizeof(FDT_ADDRESS_CELLS), &new_ac);
+  get_prop(start, strings, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS), &new_sc);
+  
+  uint32_t* i = start;
+  char allocate = 0;
+
+  // Check node name
+  char* c = (char*)(i+1);
+  allocate = !memcmp(c, FDT_MEMORY, sizeof(FDT_MEMORY)-1);
+
+  // Skip node name
+  for(; *c; c++);
+  
+  // Align on a 4-byte boundary
+  i = (uint32_t*)(c+1);
+
+  for(; i < (uint32_t*)dtb_end; i++){
+    // Ensure token 4-byte alignment
+    while((uint64_t)i%4) {i=(uint32_t*)((char*)i+1);}
+
+    switch(bigToLittleEndian32(i)){
+      case FDT_NOP:
+        break;
+      
+      case FDT_BEGIN_NODE:
+        i = __freerange(i, dtb_start, dtb_end, strings, new_ac, new_sc);
+        break;
+      
+      case FDT_PROP:
+        // Check property name
+        uint32_t* prop_name = (uint32_t*)((char*)strings+bigToLittleEndian32(i+2));
+        if(allocate && !memcmp(FDT_REG, prop_name, sizeof(FDT_REG))){
+          int size = bigToLittleEndian32(i+1);
+          for(int k=0; k<size/(4*(ac+sc)); k++){
+            uint64_t addr = 0;
+            uint64_t range = 0;
+            for(int j=0; j<ac;j++){
+              addr |= ((uint64_t)bigToLittleEndian32((i+1)+2+k*(ac+sc)+j)) << 32*(ac-j-1);
+            }
+            
+            for(int j=0; j<sc;j++){
+              range |= (uint64_t)(bigToLittleEndian32((i+1)+2+k*(ac+sc)+ac+j)) << 32*(sc-j-1);
+            }
+
+            range += addr;
+
+            char *p = (char*)PGROUNDUP(addr);
+            for(; p + PGSIZE <= (char*)range; p += PGSIZE){
+              // Avoid kernel
+              if(p <= end) continue;
+
+              // Avoid DTB
+              if(p >= (char*)dtb_start && p < (char*)dtb_end+PGSIZE) continue;
+
+              kfree(p);
+            }
+          }
+        }
+        i = skip_fd_prop(i);
+        break;
+      
+      case FDT_END_NODE:
+        return i;
+
+      case FDT_END:
+        // Check bt size integrity
+        if(i+1 != dtb_end){
+            printf("i+1 (%p) != end (%p)\n", i+1, dtb_end);
+            panic("Should be the end of FDT!");
+        }
+        break;
+      
+      default: {
+        printf("in FDT, token %p not found\n", bigToLittleEndian32(i));
+        panic("");
+      }
+    }
+  }
+
+  return dtb_end;
 }
 
 
@@ -291,26 +548,22 @@ freerange(void *pa_dtb)
   const struct fdt_header *fdt = pa_dtb;
 
   // Check magic number
-  uint32_t magic = littleToBigEndian32(&fdt->magic);
+  uint32_t magic = bigToLittleEndian32(&fdt->magic);
   if(magic != FDT_MAGIC){
     printf("given %p, expected %p\n", magic, FDT_MAGIC);
     panic("freerange: given address is not pointing to a FDT");
   }
   printf("FDT found at %p\n", pa_dtb);
 
-  void* fd_struct = (void*)((char*)fdt) + littleToBigEndian32(&fdt->off_dt_struct);
-  void* fd_strings = (void*)((char*)fdt + littleToBigEndian32(&fdt->off_dt_strings));
-  printf("struct offset %d\n", littleToBigEndian32(&fdt->off_dt_struct));
+  void* fd_struct = (void*)((char*)fdt) + bigToLittleEndian32(&fdt->off_dt_struct);
+  void* fd_strings = (void*)((char*)fdt + bigToLittleEndian32(&fdt->off_dt_strings));
+  void* fd_end = (char*)fd_struct+bigToLittleEndian32(&fdt->size_dt_struct);
 
-  print_dt_struct(fd_struct, littleToBigEndian32(&fdt->size_dt_struct), fd_strings);
+  printf("\n");
+  print_dt_node(fd_struct, fd_end, fd_strings, 0, FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS);
+  printf("\n");
 
-  panic("end of func");
-
-
-  // char *p;
-  // p = (char*)PGROUNDUP((uint64)pa_start);
-  // for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
-  //   kfree(p);
+  __freerange(fd_struct, pa_dtb, fd_end, fd_strings, FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS);
 }
 
 
@@ -323,7 +576,7 @@ void add_numa(const void* ptr){
   printf("DTB is located at %p\n", ptr);
 
   const struct fdt_header *fdt = ptr;
-  printf("Magic:    %p\nReversed: %p\n", fdt->magic, (littleToBigEndian32(&((const struct fdt_header *)(ptr))->magic)));
+  printf("Magic:    %p\nReversed: %p\n", fdt->magic, (bigToLittleEndian32(&((const struct fdt_header *)(ptr))->magic)));
   
   printf("\n");
   panic("Everything's fine... I hope");

@@ -97,7 +97,7 @@
 #ifndef KERNBASE
 #define KERNBASE 0x80200000L
 #endif
-#define PHYSTOP (KERNBASE + 128*1024*1024)
+#define PHYSTOP 0x84000000
 
 // map the trampoline page to the highest address,
 // in both user and kernel space.
