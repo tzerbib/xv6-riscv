@@ -11,13 +11,14 @@
  */
 pagetable_t kernel_pagetable;
 
+extern void _entry(void); // virtual addr of the kernel entry point
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
 // Make a direct-map page table for the kernel.
 pagetable_t
-kvmmake(void)
+kvmmake(ptr_t p_rentry)
 {
   pagetable_t kpgtbl;
 
@@ -35,14 +36,14 @@ kvmmake(void)
   kvmmap(kpgtbl, PLIC, PLIC, NB_SOCKETS*PLIC_SZ, PTE_R | PTE_W);
 
   // map kernel text executable and read-only.
-  kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+  kvmmap(kpgtbl, (ptr_t)_entry, p_rentry, (ptr_t)etext-(ptr_t)_entry, PTE_R | PTE_X);
 
   // map kernel data and the physical RAM we'll make use of.
-  kvmmap(kpgtbl, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+  kvmmap(kpgtbl, (ptr_t)etext, (ptr_t)etext, PHYSTOP-(ptr_t)etext, PTE_R | PTE_W);
 
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
-  kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+  kvmmap(kpgtbl, TRAMPOLINE, (ptr_t)trampoline, PGSIZE, PTE_R | PTE_X);
 
   // map kernel stacks
   proc_mapstacks(kpgtbl);
@@ -52,9 +53,9 @@ kvmmake(void)
 
 // Initialize the one kernel_pagetable
 void
-kvminit(void)
+kvminit(ptr_t p_entry)
 {
-  kernel_pagetable = kvmmake();
+  kernel_pagetable = kvmmake(p_entry);
 }
 
 // Switch h/w page table register to the kernel's page table,

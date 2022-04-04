@@ -9,7 +9,7 @@ volatile static int started = 0;
 extern char __bss_start; // kernel.ld sets this to begin of BSS section
 extern char __bss_end; // kernel.ld sets this to end of BSS section
 
-extern void _entry(unsigned long hartid, unsigned long dtb_pa);
+extern void _entry(void);
 
 // keep each CPU's hartid in its tp register, for cpuid().
 // Initially done in start (start.c)
@@ -20,7 +20,7 @@ static inline void inithartid(unsigned long hartid){
 
 // start() jumps here in supervisor mode on all CPUs.
 void
-main(unsigned long hartid, unsigned long dtb_pa)
+main(unsigned long hartid, unsigned long dtb_pa, ptr_t p_entry)
 {
   inithartid(hartid);
 
@@ -37,7 +37,7 @@ main(unsigned long hartid, unsigned long dtb_pa)
     printf("xv6 kernel is booting on hart %d\n", cpuid());
     printf("\n");
     kinit((void*) dtb_pa);         // physical page allocator
-    kvminit();       // create kernel page table
+    kvminit(p_entry);       // create kernel page table
 
 
     printf("\n");
