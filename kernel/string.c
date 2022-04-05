@@ -67,6 +67,14 @@ strncmp(const char *p, const char *q, uint n)
   return (uchar)*p - (uchar)*q;
 }
 
+int
+strcmp(const char *p, const char *q)
+{
+  while(*p && *q && *p == *q)
+    p++, q++;
+  return (uchar)*p - (uchar)*q;
+}
+
 char*
 strncpy(char *s, const char *t, int n)
 {
@@ -78,6 +86,15 @@ strncpy(char *s, const char *t, int n)
   while(n-- > 0)
     *s++ = 0;
   return os;
+}
+
+char*
+strcpy(char *s, const char *t)
+{
+  char *os = s;
+
+  while((*os++ = *t++) != 0);
+  return s;
 }
 
 // Like strncpy but guaranteed to NUL-terminate.

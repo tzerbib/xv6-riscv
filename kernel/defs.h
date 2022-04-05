@@ -1,3 +1,4 @@
+#include <stdint.h>
 struct buf;
 struct context;
 struct file;
@@ -130,7 +131,9 @@ void*           memset(void*, int, uint);
 char*           safestrcpy(char*, const char*, int);
 int             strlen(const char*);
 int             strncmp(const char*, const char*, uint);
+int             strcmp(const char*, const char*);
 char*           strncpy(char*, const char*, int);
+char*           strcpy(char*, const char*);
 
 // syscall.c
 int             argint(int, int*);
@@ -191,6 +194,14 @@ void            virtio_disk_intr(void);
 ////////////////////////////////////////////////////////////////////////////////
 // End of original xv6
 ////////////////////////////////////////////////////////////////////////////////
+
+//dtb.c
+void check_dtb(ptr_t);
+uint32_t* applySubnodes(void*, void*, void*, uint32_t* (*)(void*, void*), void*);
+uint32_t* applyProperties(void*, void*, void*, void (*)(char*, char*, uint32_t, void*), void*);
+char get_prop(void*, void*, char*, uint, uint32_t*);
+void print_dtb(void*);
+uint32_t* print_dt_node(void*, void*);
 
 // topology.c
 void init_topology(void);

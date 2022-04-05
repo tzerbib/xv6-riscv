@@ -32,7 +32,7 @@ OBJS = \
   $K/kernelvec.o \
   $K/plic.o \
   $K/virtio_disk.o \
-  $K/acpi.o \
+  $K/dtb.o \
   $K/topology.o \
   $K/ipi.o \
 

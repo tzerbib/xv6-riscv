@@ -20,7 +20,7 @@ static inline void inithartid(unsigned long hartid){
 
 // start() jumps here in supervisor mode on all CPUs.
 void
-main(unsigned long hartid, unsigned long dtb_pa, ptr_t p_entry)
+main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_entry)
 {
   inithartid(hartid);
 
@@ -36,6 +36,11 @@ main(unsigned long hartid, unsigned long dtb_pa, ptr_t p_entry)
     printf("xv6 kernel is configured for %d sockets and %d harts\n", NB_SOCKETS, NB_HARTS);
     printf("xv6 kernel is booting on hart %d\n", cpuid());
     printf("\n");
+    
+    check_dtb(dtb_pa);
+    printf("Correct FDT at %p\n", dtb_pa);
+    print_dtb((void*)dtb_pa);
+
     kinit((void*) dtb_pa);         // physical page allocator
     kvminit(p_entry);       // create kernel page table
 
