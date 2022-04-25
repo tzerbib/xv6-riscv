@@ -328,6 +328,28 @@ char get_prop(const void* begin, char* prop, uint size, uint32_t* buf){
 }
 
 
+void parse_reg(char* prop_name, char* prop_val, uint32_t size, void* param){
+  struct args_parse_reg* args = param;
+
+  // Check if property is "reg"
+  if(!memcmp(FDT_REG, prop_name, sizeof(FDT_REG))){
+    for(unsigned int k=0; k<size/(4*(args->c->address_cells+args->c->size_cells)); ++k){
+      ptr_t addr = 0;
+      ptr_t range = 0;
+      for(int j=0; j<args->c->address_cells;++j){
+        addr |= ((ptr_t)bigToLittleEndian32((uint32_t*)prop_val+k*(args->c->address_cells+args->c->size_cells)+j)) << 32*(args->c->address_cells-j-1);
+      }
+      
+      for(int j=0; j<args->c->size_cells;++j){
+        range |= (ptr_t)(bigToLittleEndian32((uint32_t*)prop_val+k*(args->c->address_cells+args->c->size_cells)+args->c->address_cells+j)) << 32*(args->c->size_cells-j-1);
+      }
+
+      args->f(addr, range, args->args);
+    }
+  }
+}
+
+
 static inline void pretty_spacing(int ctr){
   for(int i=0; i<ctr; i++){
     printf("\t");

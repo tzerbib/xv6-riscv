@@ -1,5 +1,3 @@
-#include <stdint.h>
-
 #define FDT_MAGIC           0xd00dfeed
 #define FDT_BEGIN_NODE      0x00000001
 #define FDT_END_NODE        0x00000002
@@ -73,6 +71,13 @@ struct args_reserved{
   const void* addr;
   unsigned char* reserved;
   const struct cells* c;
+};
+
+
+struct args_parse_reg{
+  struct cells* c;
+  void (*f)(ptr_t, ptr_t, void*);
+  void* args;
 };
 
 

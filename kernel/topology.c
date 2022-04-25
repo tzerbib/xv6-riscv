@@ -4,7 +4,6 @@
 #include "defs.h"
 #include "acpi.h"
 #include "dtb.h"
-#include <stdint.h>
 
 
 extern struct kmem kmem;
@@ -15,12 +14,6 @@ extern pagetable_t kernel_pagetable;
 extern char numa_ready;
 extern pte_t* walk(pagetable_t, uint64, int);
 extern struct fdt_repr fdt;
-
-
-struct args_compute_ranges{
-  struct cells* c;
-  uint32_t domain;
-};
 
 
 struct machine* machine = 0;   // Beginning of whole machine structure
@@ -183,42 +176,24 @@ void* add_memrange(uint32_t domain_id, void* start, uint64_t length){
 }
 
 
-void __freerange(char* name, char* value, uint32_t size, void* param){
-  struct cells* c = param;
+void __freerange(ptr_t addr, ptr_t range, void* param){
+  unsigned int ctr = 0;
 
-  // Look for property "reg" (already in "memory@<addr>")
-  if(!memcmp(FDT_REG, name, sizeof(FDT_REG))){
-    for(int k=0; k<size/(4*(c->address_cells+c->size_cells)); ++k){
-      unsigned int ctr = 0;
-      ptr_t addr = 0;
-      ptr_t range = 0;
-      for(int j=0; j<c->address_cells;++j){
-        addr |= ((ptr_t)bigToLittleEndian32((uint32_t*)value+k*(c->address_cells+c->size_cells)+j)) << 32*(c->address_cells-j-1);
-      }
-      
-      for(int j=0; j<c->size_cells;++j){
-        range |= (ptr_t)(bigToLittleEndian32((uint32_t*)value+0+k*(c->address_cells+c->size_cells)+c->address_cells+j)) << 32*(c->size_cells-j-1);
-      }
+  char *p = (char*)PGROUNDDOWN(addr);
+  for(; p + PGSIZE <= (char*)addr+range; p += PGSIZE){
+    // Avoid freeing the kernel and OpenSBI
+    if(((p >= p_entry && p < end)) || is_reserved(reserved_node, (ptr_t)p))
+      continue;
 
-      range += addr;
+    // Avoid DTB
+    if(p >= (char*)PGROUNDDOWN((ptr_t)fdt.dtb_start)
+    && p < (char*)PGROUNDUP((ptr_t)fdt.dtb_end))
+      continue;
 
-      char *p = (char*)PGROUNDDOWN(addr);
-      for(; p + PGSIZE <= (char*)range; p += PGSIZE){
-        // Avoid freeing the kernel and OpenSBI
-        if(((p >= p_entry && p < end)) || is_reserved(reserved_node, (ptr_t)p))
-          continue;
-
-        // Avoid DTB
-        if(p >= (char*)PGROUNDDOWN((ptr_t)fdt.dtb_start)
-        && p < (char*)PGROUNDUP((ptr_t)fdt.dtb_end))
-          continue;
-
-        ++ctr;
-        kfree(p);
-      }
-      printf("%p -- %p, added %d pages\n", PGROUNDDOWN(addr), p, ctr);
-    }
+    ++ctr;
+    kfree(p);
   }
+  printf("%p -- %p, added %d pages\n", PGROUNDDOWN(addr), p, ctr);
 }
 
 
@@ -234,7 +209,11 @@ freerange_node(const void* node, void* param){
   // If node name starts with "memory@", freerange
   char* name = (char*)((uint32_t*)node+1);
   if(!memcmp(name, FDT_MEMORY, sizeof(FDT_MEMORY)-1)){
-    applyProperties(node, __freerange, param);
+    struct args_parse_reg args_reg;
+    args_reg.c = param;
+    args_reg.f = __freerange;
+
+    applyProperties(node, parse_reg, &args_reg);
   }
 
   const uint32_t* next = applySubnodes(node, freerange_node, &c);
@@ -253,42 +232,27 @@ freerange(void)
 }
 
 
-void compute_ranges(char* name, char* value, uint32_t size, void* param){
-  struct args_compute_ranges* args = param;
+void compute_ranges(ptr_t addr, ptr_t range, void* param){
+  uint32_t* domain = param;
 
-  // Look for property "reg" (already in "memory@<addr>")
-  if(!memcmp(FDT_REG, name, sizeof(FDT_REG))){
-    for(int k=0; k<size/(4*(args->c->address_cells+args->c->size_cells)); ++k){
-      ptr_t addr = 0;
-      ptr_t range = 0;
-      for(int j=0; j<args->c->address_cells;++j){
-        addr |= ((ptr_t)bigToLittleEndian32((uint32_t*)value+k*(args->c->address_cells+args->c->size_cells)+j)) << 32*(args->c->address_cells-j-1);
-      }
-      
-      for(int j=0; j<args->c->size_cells;++j){
-        range |= (ptr_t)(bigToLittleEndian32((uint32_t*)value+k*(args->c->address_cells+args->c->size_cells)+args->c->address_cells+j)) << 32*(args->c->size_cells-j-1);
-      }
+  add_memrange(*domain, (void*)addr, range);
 
-      add_memrange(args->domain, (void*)addr, range);
+  // Avoid remap while reallocating the topology structure
+  if(walk(kernel_pagetable, addr, 0)) return;
 
-      // Avoid remap while reallocating the topology structure
-      if(walk(kernel_pagetable, addr, 0)) continue;
-
-      while(range > 0){
-        // Map kernel text executable and read-only.
-        if((((char*)addr >= p_entry && (char*)addr < etext))
-        || is_reserved(reserved_node, addr)){
-          kvmmap(kernel_pagetable, addr, addr, PGSIZE, PTE_R | PTE_X);
-        }
-        // Map kernel data and the physical RAM we'll make use of.
-        else{
-          kvmmap(kernel_pagetable, addr, addr, PGSIZE, PTE_R | PTE_W);
-        }
-        
-        addr += PGSIZE;
-        range -= PGSIZE;
-      }
+  while(range > 0){
+    // Map kernel text executable and read-only.
+    if((((char*)addr >= p_entry && (char*)addr < etext))
+    || is_reserved(reserved_node, addr)){
+      kvmmap(kernel_pagetable, addr, addr, PGSIZE, PTE_R | PTE_X);
     }
+    // Map kernel data and the physical RAM we'll make use of.
+    else{
+      kvmmap(kernel_pagetable, addr, addr, PGSIZE, PTE_R | PTE_W);
+    }
+    
+    addr += PGSIZE;
+    range -= PGSIZE;
   }
 }
 
@@ -322,15 +286,18 @@ compute_topology(const void* node, void* param){
 
   // Case node name starts with "memory@"
   if(!memcmp(c, FDT_MEMORY, sizeof(FDT_MEMORY)-1)){
-    struct args_compute_ranges args_cr;
-    args_cr.c = cell;
+    uint32_t domain;
+    struct args_parse_reg args_reg;
+    args_reg.args = &domain;
+    args_reg.c = cell;
+    args_reg.f = compute_ranges;
 
-    if(!get_prop(node, FDT_NUMA_DOMAIN, sizeof(FDT_NUMA_DOMAIN), &args_cr.domain)){
+    if(!get_prop(node, FDT_NUMA_DOMAIN, sizeof(FDT_NUMA_DOMAIN), &domain)){
       printf("In node %s (%p), no domain-id for memory\n", c, node);
       panic("");
     }
 
-    applyProperties(node, compute_ranges, &args_cr);
+    applyProperties(node, parse_reg, &args_reg);
   }
 
   const uint32_t* next = applySubnodes(node, compute_topology, &new_cells);
