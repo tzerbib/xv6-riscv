@@ -8,17 +8,18 @@
 
 
 extern struct kmem kmem;
-extern char end[];             // first address after kernel.
+extern char end[];            // first address after kernel.
+extern char etext[];  // kernel.ld sets this to end of kernel code.
+extern char* p_entry;         // first physical address of kernel.
 extern pagetable_t kernel_pagetable;
 extern char numa_ready;
+extern pte_t* walk(pagetable_t, uint64, int);
+extern struct fdt_repr fdt;
 
 
-struct args_freerange{
-  void* fd_end;
-  void* dtb_start;
-  void* dtb_end;
-  void* strings;
+struct args_compute_ranges{
   struct cells* c;
+  uint32_t domain;
 };
 
 
@@ -31,6 +32,8 @@ struct {
   uint64_t remaining;          // Remaining size in the last topology page
 }numa_allocator;
 
+
+const void* reserved_node = 0;
 
 
 // Ensure that there is enought space for a structure to be added
@@ -181,33 +184,39 @@ void* add_memrange(uint32_t domain_id, void* start, uint64_t length){
 
 
 void __freerange(char* name, char* value, uint32_t size, void* param){
-  struct args_freerange* args = param;
+  struct cells* c = param;
 
   // Look for property "reg" (already in "memory@<addr>")
   if(!memcmp(FDT_REG, name, sizeof(FDT_REG))){
-    for(int k=0; k<size/(4*(args->c->address_cells+args->c->size_cells)); k++){
+    for(int k=0; k<size/(4*(c->address_cells+c->size_cells)); ++k){
+      unsigned int ctr = 0;
       ptr_t addr = 0;
       ptr_t range = 0;
-      for(int j=0; j<args->c->address_cells;j++){
-        addr |= ((ptr_t)bigToLittleEndian32((uint32_t*)value+k*(args->c->address_cells+args->c->size_cells)+j)) << 32*(args->c->address_cells-j-1);
+      for(int j=0; j<c->address_cells;++j){
+        addr |= ((ptr_t)bigToLittleEndian32((uint32_t*)value+k*(c->address_cells+c->size_cells)+j)) << 32*(c->address_cells-j-1);
       }
       
-      for(int j=0; j<args->c->size_cells;j++){
-        range |= (ptr_t)(bigToLittleEndian32((uint32_t*)value+1+k*(args->c->address_cells+args->c->size_cells)+args->c->address_cells+j)) << 32*(args->c->size_cells-j-1);
+      for(int j=0; j<c->size_cells;++j){
+        range |= (ptr_t)(bigToLittleEndian32((uint32_t*)value+0+k*(c->address_cells+c->size_cells)+c->address_cells+j)) << 32*(c->size_cells-j-1);
       }
 
       range += addr;
 
-      char *p = (char*)PGROUNDUP(addr);
+      char *p = (char*)PGROUNDDOWN(addr);
       for(; p + PGSIZE <= (char*)range; p += PGSIZE){
-        // Avoid kernel
-        if(p <= end) continue;
+        // Avoid freeing the kernel and OpenSBI
+        if(((p >= p_entry && p < end)) || is_reserved(reserved_node, (ptr_t)p))
+          continue;
 
         // Avoid DTB
-        if(p >= (char*)args->dtb_start && p < (char*)args->dtb_end+PGSIZE) continue;
+        if(p >= (char*)PGROUNDDOWN((ptr_t)fdt.dtb_start)
+        && p < (char*)PGROUNDUP((ptr_t)fdt.dtb_end))
+          continue;
 
+        ++ctr;
         kfree(p);
       }
+      printf("%p -- %p, added %d pages\n", PGROUNDDOWN(addr), p, ctr);
     }
   }
 }
@@ -215,106 +224,124 @@ void __freerange(char* name, char* value, uint32_t size, void* param){
 
 
 // Parse the DTB and allocate memory ranges according to "memory@<addr>" nodes.
-uint32_t*
-freerange_node(void* node, void* param){
-  struct args_freerange* args = param;
-
+const uint32_t*
+freerange_node(const void* node, void* param){
   // Set #address-cells and #size-cells for children
-  struct cells new_cells;
-  new_cells.address_cells = FDT_DFT_ADDR_CELLS;
-  new_cells.size_cells = FDT_DFT_SIZE_CELLS;
-  get_prop(node, args->strings, FDT_ADDRESS_CELLS, sizeof(FDT_ADDRESS_CELLS), &new_cells.address_cells);
-  get_prop(node, args->strings, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS), &new_cells.size_cells);
+  struct cells c = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
+  get_prop(node, FDT_ADDRESS_CELLS, sizeof(FDT_ADDRESS_CELLS), &c.address_cells);
+  get_prop(node, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS), &c.size_cells);
   
-  // If name starts with "memory@", freerange
-  char* c = (char*)((uint32_t*)node+1);
-  if(!memcmp(c, FDT_MEMORY, sizeof(FDT_MEMORY)-1)){
-    applyProperties(node, args->fd_end, args->strings, __freerange, args);
+  // If node name starts with "memory@", freerange
+  char* name = (char*)((uint32_t*)node+1);
+  if(!memcmp(name, FDT_MEMORY, sizeof(FDT_MEMORY)-1)){
+    applyProperties(node, __freerange, param);
   }
 
-
-
-  args->c = &new_cells;
-  return applySubnodes(node, args->fd_end, args->strings, freerange_node, args);
+  const uint32_t* next = applySubnodes(node, freerange_node, &c);
+  return next;
 }
 
 
 void
-freerange(void *pa_dtb)
+freerange(void)
 {
-  const struct fdt_header *fdt = pa_dtb;
+  struct cells cell = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
 
-  void* fd_struct = (void*)((char*)fdt) + bigToLittleEndian32(&fdt->off_dt_struct);
-  void* fd_strings = (void*)((char*)fdt + bigToLittleEndian32(&fdt->off_dt_strings));
-  void* fd_end = (char*)fd_struct+bigToLittleEndian32(&fdt->size_dt_struct);
+  reserved_node = get_node(FDT_RESERVED_MEM, sizeof(FDT_RESERVED_MEM));
 
-  struct args_freerange args;
-  struct cells cells = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
-  args.c = &cells;
-  args.fd_end = fd_end;
-  args.dtb_start = pa_dtb;
-  args.dtb_end = (char*)pa_dtb + fdt->totalsize;
-  args.strings = fd_strings;
+  freerange_node(fdt.fd_struct, &cell);
+}
 
-  freerange_node(fd_struct, &args);
+
+void compute_ranges(char* name, char* value, uint32_t size, void* param){
+  struct args_compute_ranges* args = param;
+
+  // Look for property "reg" (already in "memory@<addr>")
+  if(!memcmp(FDT_REG, name, sizeof(FDT_REG))){
+    for(int k=0; k<size/(4*(args->c->address_cells+args->c->size_cells)); ++k){
+      ptr_t addr = 0;
+      ptr_t range = 0;
+      for(int j=0; j<args->c->address_cells;++j){
+        addr |= ((ptr_t)bigToLittleEndian32((uint32_t*)value+k*(args->c->address_cells+args->c->size_cells)+j)) << 32*(args->c->address_cells-j-1);
+      }
+      
+      for(int j=0; j<args->c->size_cells;++j){
+        range |= (ptr_t)(bigToLittleEndian32((uint32_t*)value+k*(args->c->address_cells+args->c->size_cells)+args->c->address_cells+j)) << 32*(args->c->size_cells-j-1);
+      }
+
+      add_memrange(args->domain, (void*)addr, range);
+
+      // Avoid remap while reallocating the topology structure
+      if(walk(kernel_pagetable, addr, 0)) continue;
+
+      while(range > 0){
+        // Map kernel text executable and read-only.
+        if((((char*)addr >= p_entry && (char*)addr < etext))
+        || is_reserved(reserved_node, addr)){
+          kvmmap(kernel_pagetable, addr, addr, PGSIZE, PTE_R | PTE_X);
+        }
+        // Map kernel data and the physical RAM we'll make use of.
+        else{
+          kvmmap(kernel_pagetable, addr, addr, PGSIZE, PTE_R | PTE_W);
+        }
+        
+        addr += PGSIZE;
+        range -= PGSIZE;
+      }
+    }
+  }
+}
+
+
+const uint32_t*
+compute_topology(const void* node, void* param){
+  struct cells* cell = param;
+
+  struct cells new_cells = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
+  get_prop(node, FDT_ADDRESS_CELLS, sizeof(FDT_ADDRESS_CELLS), &new_cells.address_cells);
+  get_prop(node, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS), &new_cells.size_cells);
+
+  char* c = (char*)((uint32_t*)node+1);
+
+  // Case node name starts with "cpu@"
+  if(!memcmp(c, FDT_CPU, sizeof(FDT_CPU)-1)){
+    uint32_t domain, id;
+
+    if(!get_prop(node, FDT_NUMA_DOMAIN, sizeof(FDT_NUMA_DOMAIN), &domain)){
+      printf("In node %s (%p), no domain-id for cpu\n", c, node);
+      panic("");
+    }
+    
+    if(!get_prop(node, FDT_REG, sizeof(FDT_REG), &id)){
+      printf("In node %s (%p), no cpu id\n", c, node);
+      panic("");
+    }
+
+    add_cpu(domain, id);
+  }
+
+  // Case node name starts with "memory@"
+  if(!memcmp(c, FDT_MEMORY, sizeof(FDT_MEMORY)-1)){
+    struct args_compute_ranges args_cr;
+    args_cr.c = cell;
+
+    if(!get_prop(node, FDT_NUMA_DOMAIN, sizeof(FDT_NUMA_DOMAIN), &args_cr.domain)){
+      printf("In node %s (%p), no domain-id for memory\n", c, node);
+      panic("");
+    }
+
+    applyProperties(node, compute_ranges, &args_cr);
+  }
+
+  const uint32_t* next = applySubnodes(node, compute_topology, &new_cells);
+  return next;
 }
 
 
 // Add a numa topology given by a SRAT table to the machine description
-void add_numa(const void* ptr){
-  /* The device tree must be at an 8-byte aligned address */
-  if ((uintptr_t)ptr & 7)
-    panic("FDT is not 8-byte aligned");
-  
-  printf("DTB is located at %p\n", ptr);
-
-  const struct fdt_header *fdt = ptr;
-  printf("Magic:    %p\nReversed: %p\n", fdt->magic, (bigToLittleEndian32(&((const struct fdt_header *)(ptr))->magic)));
-  
-  printf("\n");
-  panic("Everything's fine... I hope");
-
-  struct SRAT* srat = (struct SRAT*) ptr;
-  uint8_t* curr = ((uint8_t*)srat) + sizeof(struct SRAT);
-
-  while(curr < ((uint8_t*)srat)+srat->length){
-    switch(*curr){
-      // Processor Local APIC Affinity Structure
-      case 0x0:{
-        struct SRAT_proc_lapic_struct* lapic = (struct SRAT_proc_lapic_struct*)curr;
-        if(!lapic->flags){break;}
-        uint32_t domain_id = (lapic->hi_DM[2] << 24)
-                           + (lapic->hi_DM[1] << 16)
-                           + (lapic->hi_DM[0] << 8)
-                           + lapic->lo_DM;
-        add_cpu(domain_id, (uint32_t)lapic->APIC_ID);
-        break;
-      }
-      // Memory Affinity Structure
-      case 0x1:{
-        struct SRAT_mem_struct* memrange = (struct SRAT_mem_struct*)curr;
-        if(!memrange->flags){break;}
-        uint32_t domain_id = memrange->domain;
-        ptr_t addr = ((uint64_t)memrange->hi_base << 32) + memrange->lo_base;
-        ptr_t length = ((uint64_t)memrange->hi_length << 32) + memrange->lo_length;
-        add_memrange(domain_id, (void*)addr, length);
-        break;
-      }
-      // Processor Local x2APIC Affinity Structure
-      case 0x2:{
-        struct SRAT_proc_lapic2_struct* lapic = (struct SRAT_proc_lapic2_struct*)curr;
-        if(!lapic->flags){break;}
-        add_cpu(lapic->domain, lapic->x2APIC_ID);
-        break;
-      }
-      default:{
-        panic("Unknown SRAT subtable type!\n");
-      }
-    }
-    
-    // Add struct length
-    curr += *(curr+1);
-  }
+void add_numa(){
+  struct cells cell = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
+  compute_topology(fdt.fd_struct, &cell);
 }
 
 
@@ -382,84 +409,8 @@ void* kalloc_numa(void){
 }
 
 
-// Add freepages not included in kernel.freelist and map the associated memory
-void add_missing_pages(void){
-  struct memrange* m;
-  char *r, *memend, *stop;
-  unsigned int ctr;
-
-  // Browse all memory ranges
-  for(m=machine->all_ranges; m; m=m->all_next){
-    // Add all addresses lower than the kernel to the domain freepage list
-    r = (char*)PGROUNDUP((uint64)m->start);
-    memend = (char*)m->start+m->length;
-    stop = ((char*)KERNBASE < memend)? (char*)KERNBASE : memend;
-
-    printf("%p", r);
-    for(ctr=0; r + PGSIZE <= stop; r+=PGSIZE){
-      // Avoid some risc-V specific addresses
-      if((r >= (char*)UART0 && r < (char*)UART0+PGSIZE)
-      || (r >= (char*)VIRTIO0 && r < (char*)VIRTIO0+PGSIZE)
-      || (r >= (char*)PLIC && r < (char*)PLIC+0x400000)){
-        continue;
-      }
-
-      // Map lower pages
-      kvmmap(kernel_pagetable, (uint64)r, (uint64)r, PGSIZE, PTE_R | PTE_W);
-      
-      // Add the page to the domain freelist
-      kfree_numa(r);
-      ++ctr;
-    }
-    printf(" -- %p (< %p), added %d pages\n", memend, stop, ctr);
-
-
-    // Add all addresses greater than the kernel to the domain freepage list
-    printf("%p", m->start);
-    for(r=(char*)PHYSTOP, ctr=0; r + PGSIZE <= memend ; r+=PGSIZE){
-      // Avoid some specific addresses
-      if(r >= (char*)TRAMPOLINE && r < (char*)TRAMPOLINE+PGSIZE){
-        continue;
-      }
-
-
-
-      // *r = 42;
-      // printf("*(%p) = %d\n", r, *r);
-
-      // struct domain* curr_dom;
-      // struct run *curr_pg;
-
-      // for(curr_dom=machine->all_domains; curr_dom; curr_dom=curr_dom->all_next){
-        // printf("%p in domain %d\n", r, curr_dom->domain_id);
-      //   curr_pg = curr_dom->freepages.freelist;
-      //   while(curr_pg){
-      //     // printf("Check %p\n", curr_pg);
-      //     if((void*)curr_pg == r){
-      //       printf("For page %p\n", curr_pg);
-      //       panic("Page freed twice");
-      //     }
-      //     curr_pg = curr_pg->next;
-      //   }
-      // }
-
-
-
-
-      // Map upper pages
-      kvmmap(kernel_pagetable, (uint64)r, (uint64)r, PGSIZE, PTE_R | PTE_W);
-
-      // Add the page to the domain freelist
-      kfree_numa(r);
-      ++ctr;
-    }
-    printf(" -- %p (> %p), added %d pages\n", memend, (char*)PHYSTOP, ctr);
-  }
-}
-
-
 // Fill the freepage list of each domain by browsing the kernel freepage list
-void assign_freepages(){
+void assign_freepages(void* pa_dtb){
   struct run *r, *r2;
   struct memrange* memrange;
   struct domain* domain;
@@ -514,8 +465,6 @@ void assign_freepages(){
   }
 
   printf("From xv6 freelist, extracted %d pages\n", ctr);
-
-  add_missing_pages();
 }
 
 

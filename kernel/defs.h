@@ -63,7 +63,7 @@ void            ramdiskrw(struct buf*);
 // kalloc.c
 void*           kalloc(void);
 void            kfree(void *);
-void            kinit(void*);
+void            kinit(void);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -158,7 +158,7 @@ void            uartputc_sync(int);
 int             uartgetc(void);
 
 // vm.c
-void            kvminit(ptr_t);
+void            kvminit(void);
 void            kvminithart(void);
 void            kvmmap(pagetable_t, uint64, uint64, uint64, int);
 int             mappages(pagetable_t, uint64, uint64, uint64, int);
@@ -196,19 +196,21 @@ void            virtio_disk_intr(void);
 ////////////////////////////////////////////////////////////////////////////////
 
 //dtb.c
-void check_dtb(ptr_t);
-uint32_t* applySubnodes(void*, void*, void*, uint32_t* (*)(void*, void*), void*);
-uint32_t* applyProperties(void*, void*, void*, void (*)(char*, char*, uint32_t, void*), void*);
-char get_prop(void*, void*, char*, uint, uint32_t*);
-void print_dtb(void*);
-uint32_t* print_dt_node(void*, void*);
+void initialize_fdt(const void*);
+const void* get_node(char*, unsigned int);
+const uint32_t* applySubnodes(const void*, const uint32_t* (*)(const void*, void*), void*);
+const uint32_t* applyProperties(const void*, void (*)(char*, char*, uint32_t, void*), void*);
+char get_prop(const void*, char*, uint, uint32_t*);
+void print_dtb(void);
+const uint32_t* print_dt_node(const void*, void*);
+unsigned char is_reserved(const void*, ptr_t);
 
 // topology.c
 void init_topology(void);
 void finalize_topology(void);
-void add_numa(const void*);
+void add_numa(void);
 void print_topology(void);
-void assign_freepages(void);
+void assign_freepages(void*);
 void free_machine(void);
 void print_struct_machine_loc(void);
 

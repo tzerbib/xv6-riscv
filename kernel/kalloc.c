@@ -11,7 +11,7 @@
 #include "kalloc.h"
 
 
-void freerange(void *pa_dtb);
+void freerange(void);
 extern void* kalloc_numa(void);
 extern void kfree_numa(void*);
 char numa_ready = 0;
@@ -23,10 +23,10 @@ struct kmem kmem;
 
 
 void
-kinit(void* pa_dtb)
+kinit(void)
 {
   initlock(&kmem.lock, "kmem");
-  freerange(pa_dtb);
+  freerange();
 }
 
 

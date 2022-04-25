@@ -13,7 +13,12 @@
 #define FDT_DFT_SIZE_CELLS  1
 #define FDT_PHANDLE         "phandle"
 #define FDT_REG             "reg"
+#define FDT_MMOD_RES        "mmode_resv"
 #define FDT_MEMORY          "memory@"
+#define FDT_CPU             "cpu@"
+#define FDT_NUMA_DOMAIN     "numa-node-id"
+#define FDT_RESERVED_MEM    "reserved-memory"
+
 
 struct fdt_header{
   uint32_t magic;
@@ -28,6 +33,13 @@ struct fdt_header{
   uint32_t size_dt_struct;
 };
 
+struct fdt_repr{
+  const void* fd_struct;
+  const void* fd_struct_end;
+  const void* fd_strings;
+  const void* dtb_start;
+  const void* dtb_end;
+};
 
 struct cells{
   uint32_t address_cells;
@@ -46,16 +58,21 @@ struct args_parse_prop{
   int nb_prop;
 };
 
-struct args_print_dt_node{
-  void* dtb_end;
-  void* strings;
-  int tab_ctr;
-  struct cells c;
-};
-
-struct args_print_dt_prop{
+struct args_print_dt{
   int tab_ctr;
   struct cells* c;
+};
+
+struct args_get_node{
+  char* node_name;
+  unsigned int size;
+  const void* addr;
+};
+
+struct args_reserved{
+  const void* addr;
+  unsigned char* reserved;
+  const struct cells* c;
 };
 
 
@@ -71,7 +88,7 @@ static inline uint32_t bigToLittleEndian32(const uint32_t *p)
 }
 
 
-static inline void* skip_fd_prop(uint32_t* p){
+static inline void* skip_fd_prop(const uint32_t* p){
   // Skip property content
   return (uint32_t*)((char*)p + 8 + bigToLittleEndian32(p+1));
 }

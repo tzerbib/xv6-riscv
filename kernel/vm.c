@@ -13,12 +13,12 @@ pagetable_t kernel_pagetable;
 
 extern void _entry(void); // virtual addr of the kernel entry point
 extern char etext[];  // kernel.ld sets this to end of kernel code.
-
+extern char* p_entry;         // first physical address of kernel.
 extern char trampoline[]; // trampoline.S
 
 // Make a direct-map page table for the kernel.
 pagetable_t
-kvmmake(ptr_t p_rentry)
+kvmmake()
 {
   pagetable_t kpgtbl;
 
@@ -35,11 +35,7 @@ kvmmake(ptr_t p_rentry)
   //[numa] There is one PLIC per NUMA socket, so map them all.
   kvmmap(kpgtbl, PLIC, PLIC, NB_SOCKETS*PLIC_SZ, PTE_R | PTE_W);
 
-  // map kernel text executable and read-only.
-  kvmmap(kpgtbl, (ptr_t)_entry, p_rentry, (ptr_t)etext-(ptr_t)_entry, PTE_R | PTE_X);
-
-  // map kernel data and the physical RAM we'll make use of.
-  kvmmap(kpgtbl, (ptr_t)etext, (ptr_t)etext, PHYSTOP-(ptr_t)etext, PTE_R | PTE_W);
+  // Kernal text, data and RAM are mapped during topology extraction (compute_ranges)
 
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
@@ -53,9 +49,9 @@ kvmmake(ptr_t p_rentry)
 
 // Initialize the one kernel_pagetable
 void
-kvminit(ptr_t p_entry)
+kvminit()
 {
-  kernel_pagetable = kvmmake(p_entry);
+  kernel_pagetable = kvmmake();
 }
 
 // Switch h/w page table register to the kernel's page table,

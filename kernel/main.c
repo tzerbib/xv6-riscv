@@ -6,10 +6,8 @@
 
 volatile static int started = 0;
 
-extern char __bss_start; // kernel.ld sets this to begin of BSS section
-extern char __bss_end; // kernel.ld sets this to end of BSS section
-
 extern void _entry(void);
+char* p_entry;         // first physical address of kernel.
 
 // keep each CPU's hartid in its tp register, for cpuid().
 // Initially done in start (start.c)
@@ -20,7 +18,7 @@ static inline void inithartid(unsigned long hartid){
 
 // start() jumps here in supervisor mode on all CPUs.
 void
-main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_entry)
+main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_kstart)
 {
   inithartid(hartid);
 
@@ -30,6 +28,7 @@ main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_entry)
   w_sie(r_sie() | SIE_SEIE | SIE_STIE | SIE_SSIE);
 
   if(dtb_pa != 0){
+    p_entry = (void*) p_kstart;
     consoleinit();
     printfinit();
     printf("\n");
@@ -37,35 +36,32 @@ main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_entry)
     printf("xv6 kernel is booting on hart %d\n", cpuid());
     printf("\n");
     
-    check_dtb(dtb_pa);
+    initialize_fdt((void*)dtb_pa);
     printf("Correct FDT at %p\n", dtb_pa);
-    print_dtb((void*)dtb_pa);
+    print_dtb();
 
-    kinit((void*) dtb_pa);         // physical page allocator
-    kvminit(p_entry);       // create kernel page table
-
+    kinit();    // physical page allocator
+    kvminit();         // create kernel page table
 
     printf("\n");
-    // char* srat = init_SRAT();
-    // print_srat(srat);
     init_topology();
-    // add_numa((void*) dtb_pa);
-    // finalize_topology();
-    // assign_freepages();
-    // printf("\n\n--- Computed topology (old kalloc): ---\n\n");
-    // print_topology();
-    // print_struct_machine_loc();
-    // printf("\n\n");
+    add_numa();
+    finalize_topology();
+    assign_freepages((void*) dtb_pa);
+    printf("\n\n--- Computed topology (old kalloc): ---\n\n");
+    print_topology();
+    print_struct_machine_loc();
+    printf("\n\n");
 
-    // init_topology();
-    // add_numa(srat);
-    // finalize_topology();
-    // assign_freepages();
-    // free_machine();
-    // printf("\n\n--- Computed topology (new kalloc): ---\n\n");
-    // print_topology();
-    // print_struct_machine_loc();
-    // printf("\n\n");
+    init_topology();
+    add_numa();
+    finalize_topology();
+    assign_freepages((void*) dtb_pa);
+    free_machine();
+    printf("\n\n--- Computed topology (new kalloc): ---\n\n");
+    print_topology();
+    print_struct_machine_loc();
+    printf("\n\n");
 
 
     kvminithart();   // turn on paging

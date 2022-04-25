@@ -6,8 +6,15 @@
 #include "dtb.h"
 
 
-void check_dtb(unsigned long pa_dtb){
+struct fdt_repr fdt;
+
+
+void check_dtb(const void* pa_dtb){
   const struct fdt_header *fdt = (void*)pa_dtb;
+
+  /* The device tree must be at an 8-byte aligned address */
+  if ((ptr_t)pa_dtb % 8)
+    panic("FDT is not 8-byte aligned");
 
   // Check magic number
   uint32_t magic = bigToLittleEndian32(&fdt->magic);
@@ -18,17 +25,30 @@ void check_dtb(unsigned long pa_dtb){
 }
 
 
+void initialize_fdt(const void* pa_dtb){
+  check_dtb(pa_dtb);
+
+  const struct fdt_header *fdt_h = pa_dtb;
+
+  fdt.dtb_start = pa_dtb;
+  fdt.fd_struct = (void*)((char*)fdt_h) + bigToLittleEndian32(&fdt_h->off_dt_struct);
+  fdt.fd_struct_end = (char*)fdt.fd_struct+bigToLittleEndian32(&fdt_h->size_dt_struct);
+  fdt.fd_strings = (void*)((char*)fdt_h + bigToLittleEndian32(&fdt_h->off_dt_strings));
+  fdt.dtb_end = (char*)pa_dtb + bigToLittleEndian32(&fdt_h->totalsize);
+}
+
+
 // Apply f to all properties.
-uint32_t*
-applyProperties(void* node, void* dtb_end, void* strings, void (*f)(char*, char*, uint32_t, void*), void* args){
-  uint32_t* i = node;
+const uint32_t*
+applyProperties(const void* node, void (*f)(char*, char*, uint32_t, void*), void* args){
+  const uint32_t* i = node;
 
   // Skip node name
   char* c = (char*)(i+1);
   for(; *c; c++);
   i = (uint32_t*)(c+1);
   
-  for(; i < (uint32_t*)dtb_end; i++){
+  for(; i < (uint32_t*)fdt.fd_struct_end; i++){
     // Ensure token 4-byte alignment
     while((ptr_t)i%4) {i=(uint32_t*)((char*)i+1);}
 
@@ -42,7 +62,7 @@ applyProperties(void* node, void* dtb_end, void* strings, void (*f)(char*, char*
       
       case FDT_PROP:
         // Get property name
-        char* prop_name = (char*)strings+bigToLittleEndian32(i+2);
+        char* prop_name = (char*)fdt.fd_strings+bigToLittleEndian32(i+2);
                 
         f(prop_name, (char*)(i+3), bigToLittleEndian32(i+1), args);
         i = skip_fd_prop(i);
@@ -53,8 +73,8 @@ applyProperties(void* node, void* dtb_end, void* strings, void (*f)(char*, char*
 
       case FDT_END:
         // Check bt size integrity
-        if(i+1 != dtb_end){
-            printf("i+1 (%p) != end (%p)\n", i+1, dtb_end);
+        if(i+1 != fdt.fd_struct_end){
+            printf("i+1 (%p) != end (%p)\n", i+1, fdt.fd_struct_end);
             panic("Should be the end of FDT!");
         }
         break;
@@ -66,21 +86,21 @@ applyProperties(void* node, void* dtb_end, void* strings, void (*f)(char*, char*
     }
   }
 
-  return dtb_end;
+  return fdt.fd_struct_end;
 }
 
 
 // Apply f to all subnodes.
-uint32_t*
-applySubnodes(void* node, void* dtb_end, void* strings, uint32_t* (*f)(void*, void*), void* args){
-  uint32_t* i = node;
+const uint32_t*
+applySubnodes(const void* node, const uint32_t* (*f)(const void*, void*), void* args){
+  const uint32_t* i = node;
 
   // Skip node name
   char* c = (char*)(i+1);
   for(; *c; c++);
   i = (uint32_t*)(c+1);
   
-  for(; i < (uint32_t*)dtb_end; i++){
+  for(; i < (uint32_t*)fdt.fd_struct_end; i++){
     // Ensure token 4-byte alignment
     while((ptr_t)i%4) {i=(uint32_t*)((char*)i+1);}
 
@@ -101,8 +121,8 @@ applySubnodes(void* node, void* dtb_end, void* strings, uint32_t* (*f)(void*, vo
 
       case FDT_END:
         // Check bt size integrity
-        if(i+1 != dtb_end){
-            printf("i+1 (%p) != end (%p)\n", i+1, dtb_end);
+        if(i+1 != fdt.fd_struct_end){
+            printf("i+1 (%p) != end (%p)\n", i+1, fdt.fd_struct_end);
             panic("Should be the end of FDT!");
         }
         break;
@@ -114,12 +134,12 @@ applySubnodes(void* node, void* dtb_end, void* strings, uint32_t* (*f)(void*, vo
     }
   }
 
-  return dtb_end;
+  return fdt.fd_struct_end;
 }
 
 
 // Return the number of properties of a given node
-int get_nb_prop(void* begin, void* end, void* strings, int nb_parent, struct properties parent_p[]){
+int get_nb_prop(void* begin, int nb_parent, struct properties parent_p[]){
   int r = nb_parent;
 
   // Check if begin points to a node
@@ -149,7 +169,7 @@ int get_nb_prop(void* begin, void* end, void* strings, int nb_parent, struct pro
       
       case FDT_PROP:
         // Get property name
-        char* prop_name = (char*)strings+bigToLittleEndian32(i+2);
+        char* prop_name = (char*)fdt.fd_strings+bigToLittleEndian32(i+2);
 
         // Check if property already exist in parent
         int np = 0;
@@ -205,7 +225,7 @@ void add_new_prop(char* prop_name, char* prop_value, uint32_t p_size, void* p){
 }
 
 
-void parse_prop(void* node, void* dtb_end, void* strings, struct properties* self, struct properties* parent, int nb_parent){
+void parse_prop(const void* node, struct properties* self, struct properties* parent, int nb_parent){
   if(parent)
     memmove(self, parent, nb_parent*sizeof(struct properties));
 
@@ -214,22 +234,49 @@ void parse_prop(void* node, void* dtb_end, void* strings, struct properties* sel
   args.self = self;
   args.nb_prop = nb_parent;
 
-  applyProperties(node, dtb_end, strings, add_new_prop, &args);
+  applyProperties(node, add_new_prop, &args);
 }
 
+
+const uint32_t*
+get_dt_node(const void* node, void* param){
+  struct args_get_node* args = param;
+
+  char* c = (char*)((uint32_t*)node+1);
+
+  // Is this the looked for node
+  if(!memcmp(c, args->node_name, args->size)){
+    args->addr = node;
+    return fdt.fd_struct_end;
+  }
+
+  return applySubnodes(node, get_dt_node, args);
+}
+
+
+const void* get_node(char* name, unsigned int size){
+  struct args_get_node args;
+  args.node_name = name;
+  args.size = size;
+  args.addr = 0;
+
+  get_dt_node(fdt.fd_struct, &args);
+
+  return args.addr;
+}
 
 
 // If the node has a property named prop, then returns 1 and set buf to property
 // Else return 0.
 // begin should point to the begining of a node
-char get_prop(void* begin, void* strings, char* prop, uint size, uint32_t* buf){
+char get_prop(const void* begin, char* prop, uint size, uint32_t* buf){
   // Check if begin points to a node
   if(bigToLittleEndian32(begin) != FDT_BEGIN_NODE){
     panic("in get_address_cells: begin should be the begining of a node");
   }
 
   // Skip node name
-  uint32_t* i = begin+1;
+  const uint32_t* i = begin+1;
   char* c;
   for(c = (char*)(i+1); *c; c++);
 
@@ -252,7 +299,7 @@ char get_prop(void* begin, void* strings, char* prop, uint size, uint32_t* buf){
       
       case FDT_PROP:
         // Print property name
-        uint32_t* prop_name = (uint32_t*)((char*)strings+bigToLittleEndian32(i+2));
+        uint32_t* prop_name = (uint32_t*)((char*)fdt.fd_strings+bigToLittleEndian32(i+2));
 
         // Case prop_name == prop
         if(!memcmp(prop_name, prop, size)){
@@ -289,7 +336,7 @@ static inline void pretty_spacing(int ctr){
 
 
 void print_property(char* prop_name, char* value, uint32_t size, void* param){
-  struct args_print_dt_prop* args = param;
+  struct args_print_dt* args = param;
 
   pretty_spacing(args->tab_ctr);
   printf("%s", prop_name);
@@ -312,28 +359,31 @@ void print_property(char* prop_name, char* value, uint32_t size, void* param){
   // Case reg
   else if(!memcmp(prop_name, FDT_REG, sizeof(FDT_REG))){
     printf(": ");
-    printf("[s:%d ac:%d sc:%d r:%d] ", size, args->c->address_cells, args->c->size_cells, size/(4*(args->c->address_cells+args->c->size_cells)));
     for(int i=0; i<size/(4*(args->c->address_cells+args->c->size_cells)); i++){
       printf("< ");
       // Print ac addresses
-      for(int j=0; j<args->c->address_cells;j++){
+      for(int j=0; j<args->c->address_cells;++j){
         printf("0x%x ", bigToLittleEndian32((uint32_t*)value+i*(args->c->address_cells+args->c->size_cells)+j));
       }
       printf("; ");
       // Print sc sizes
-      for(int j=0; j<args->c->size_cells;j++){
+      for(int j=0; j<args->c->size_cells;++j){
         printf("0x%x ", bigToLittleEndian32((uint32_t*)value+i*(args->c->address_cells+args->c->size_cells)+args->c->address_cells+j));
       }
       printf("> ");
     }
   }
 
+  else if(!memcmp(prop_name, FDT_NUMA_DOMAIN, sizeof(FDT_NUMA_DOMAIN))){
+    printf(": %d", bigToLittleEndian32((uint32_t*)value));
+  }
+
   printf("\n");
 }
 
 
-uint32_t* print_dt_node(void* node, void* param){
-  struct args_print_dt_node* args = param;
+const uint32_t* print_dt_node(const void* node, void* param){
+  struct args_print_dt* args = param;
 
   // Print node name
   pretty_spacing(args->tab_ctr);
@@ -343,23 +393,20 @@ uint32_t* print_dt_node(void* node, void* param){
   printf("\n");
   
   // Print properties
-  struct args_print_dt_prop args_print_prop;
-  args_print_prop.tab_ctr = args->tab_ctr+1;
-  args_print_prop.c = &args->c;
-  // args_print_dt_prop.props = props;
-  applyProperties(node, args->dtb_end, args->strings, print_property, &args_print_prop);
+  args->tab_ctr++;
+  applyProperties(node, print_property, args);
 
-  struct args_print_dt_node new_args;
-  new_args.dtb_end = args->dtb_end;
-  new_args.strings = args->strings;
-  new_args.tab_ctr = args->tab_ctr+1;
-  new_args.c.address_cells = FDT_DFT_ADDR_CELLS;
-  new_args.c.size_cells = FDT_DFT_SIZE_CELLS;
-  get_prop(node, args->strings, FDT_ADDRESS_CELLS, sizeof(FDT_ADDRESS_CELLS), &new_args.c.address_cells);
-  get_prop(node, args->strings, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS), &new_args.c.size_cells);
+  struct cells new_cell = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
+  get_prop(node, FDT_ADDRESS_CELLS, sizeof(FDT_ADDRESS_CELLS), &new_cell.address_cells);
+  get_prop(node, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS), &new_cell.size_cells);
 
-  uint32_t* r = applySubnodes(node, args->dtb_end, args->strings, print_dt_node, &new_args);
 
+  struct cells* old_cell = args->c;
+  args->c = &new_cell;
+  const uint32_t* r = applySubnodes(node, print_dt_node, args);
+  args->c = old_cell;
+
+  args->tab_ctr--;
   pretty_spacing(args->tab_ctr);
   printf("END NODE\n");
 
@@ -367,20 +414,64 @@ uint32_t* print_dt_node(void* node, void* param){
 }
 
 
-void print_dtb(void* pa_dtb){
-  const struct fdt_header *fdt = pa_dtb;
-
-  void* fd_struct = (void*)((char*)fdt) + bigToLittleEndian32(&fdt->off_dt_struct);
-  void* fd_strings = (void*)((char*)fdt + bigToLittleEndian32(&fdt->off_dt_strings));
-  void* fd_end = (char*)fd_struct+bigToLittleEndian32(&fdt->size_dt_struct);
-
+void print_dtb(){
   printf("\n");
-  struct args_print_dt_node args;
-  args.dtb_end = fd_end;
-  args.strings = fd_strings;
+  struct args_print_dt args;
   args.tab_ctr = 0;
-  args.c.address_cells = FDT_DFT_ADDR_CELLS;
-  args.c.size_cells = FDT_DFT_SIZE_CELLS;
-  print_dt_node(fd_struct, &args);
+  struct cells c = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
+  args.c = &c;
+  print_dt_node(fdt.fd_struct, &args);
   printf("\n");
 }
+
+
+void __is_reserved(char* name, char* value, uint32_t size, void* param){
+  struct args_reserved* args = param;
+
+  // Look for property "reg" (already in "reserved-memory/mmresv")
+  if(!memcmp(FDT_REG, name, sizeof(FDT_REG))){
+    for(int k=0; k<size/(4*(args->c->address_cells+args->c->size_cells)); ++k){
+      ptr_t addr = 0;
+      ptr_t range = 0;
+      for(int j=0; j<args->c->address_cells;++j){
+        addr |= ((ptr_t)bigToLittleEndian32((uint32_t*)value+k*(args->c->address_cells+args->c->size_cells)+j)) << 32*(args->c->address_cells-j-1);
+      }
+      
+      for(int j=0; j<args->c->size_cells;++j){
+        range |= (ptr_t)(bigToLittleEndian32((uint32_t*)value+k*(args->c->address_cells+args->c->size_cells)+args->c->address_cells+j)) << 32*(args->c->size_cells-j-1);
+      }
+
+      range += addr;
+
+      if((ptr_t)args->addr >= addr && (ptr_t)args->addr < range){
+        *args->reserved = 1;
+        return;
+      }
+    }
+  }
+}
+
+
+const uint32_t* get_all_res(const void* node, void* args){
+  return applyProperties(node, __is_reserved, args);
+}
+
+unsigned char is_reserved(const void* reserved_node, ptr_t addr){
+  if(!reserved_node)
+    return 0;
+
+  struct cells c = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
+  get_prop(reserved_node, FDT_ADDRESS_CELLS, sizeof(FDT_ADDRESS_CELLS), &c.address_cells);
+  get_prop(reserved_node, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS), &c.size_cells);
+
+  struct args_reserved args;
+  unsigned char is_res = 0;
+  args.reserved = &is_res;
+  args.c = &c;
+  args.addr = (void*)addr;
+  
+  applySubnodes(reserved_node, get_all_res, &args);
+
+  return *args.reserved;
+}
+
