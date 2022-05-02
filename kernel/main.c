@@ -3,6 +3,7 @@
 #include "memlayout.h"
 #include "riscv.h"
 #include "defs.h"
+#include "topology.h"
 
 volatile static int started = 0;
 
@@ -13,6 +14,15 @@ char* p_entry;         // first physical address of kernel.
 // Initially done in start (start.c)
 static inline void inithartid(unsigned long hartid){
   w_tp(hartid);
+}
+
+
+static inline void wakeup_cores(void* cpu_desc, void* args){
+  struct cpu_desc* cpu = cpu_desc;
+  uint32_t* boot_hart = args;
+
+  if(cpu->lapic != *boot_hart)
+    sbi_start_hart(cpu->lapic, (unsigned long)&_entry, 0);
 }
 
 
@@ -32,7 +42,6 @@ main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_kstart)
     consoleinit();
     printfinit();
     printf("\n");
-    printf("xv6 kernel is configured for %d sockets and %d harts\n", NB_SOCKETS, NB_HARTS);
     printf("xv6 kernel is booting on hart %d\n", cpuid());
     printf("\n");
     
@@ -42,6 +51,7 @@ main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_kstart)
 
     kinit();    // physical page allocator
     kvminit();         // create kernel page table
+
 
     printf("\n");
     init_topology();
@@ -71,9 +81,6 @@ main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_kstart)
     plicinit();      // set up interrupt controller
     
     
-    sbi_get_spec_version();
-    
-    
     plicinithart();  // ask PLIC for device interrupts
     binit();         // buffer cache
     iinit();         // inode table
@@ -81,11 +88,10 @@ main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_kstart)
     virtio_disk_init(); // emulated hard disk
     userinit();      // first user process
 
-    // Waik up all other cores by sending an ipi to them
-    for(int i = 0; i < NB_HARTS; i++){
-      if(i == hartid) continue;
-      sbi_start_hart(i, (unsigned long)&_entry, 0);
-    }
+
+    // Wake up all other cores by sending an ipi to them
+    forall_cpu(wakeup_cores, &hartid);
+
 
     __sync_synchronize();
     started = 1;

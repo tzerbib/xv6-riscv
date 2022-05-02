@@ -1,3 +1,6 @@
+#ifndef __TOPOLOGY__
+#define __TOPOLOGY__
+
 #include "types.h"
 #include "spinlock.h"
 #include "kalloc.h"
@@ -34,3 +37,14 @@ struct domain{
   struct cpu_desc* cpus;       // First cpu of this numa domain 
   struct kmem freepages;       // First free page for this domain
 };
+
+
+struct domain* get_domain(int);
+void forall_domain(void (*f)(void*, void*), void* args);
+void forall_cpu(void (*f)(void*, void*), void* args);
+int get_nb_domain(void);
+int get_nb_cpu(void);
+int get_nb_cpu_in_domain(struct domain*);
+
+
+#endif // __TOPOLOGY__

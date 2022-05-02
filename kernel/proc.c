@@ -72,18 +72,14 @@ cpuid()
 
 // Must be called with interrupts disable because of cpuid()
 void* my_domain(){
-  struct cpu_desc* curr;
+  void* r = 0;
   
   int cpu = cpuid();
 
-  // Browse cpu structures until the one running this code is found
-  for(curr=machine->all_cpus; curr; curr=curr->all_next){
-    if(curr->lapic == cpu){
-      return curr->domain;
-    }
-  }
+  if(!(r = get_domain(cpu)))
+    panic("The cpu running this code is not known by the kernel");
 
-  panic("The cpu running this code is not known by the kernel");
+  return r;
 }
 
 

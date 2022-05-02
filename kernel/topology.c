@@ -435,6 +435,76 @@ void assign_freepages(void* pa_dtb){
 }
 
 
+struct domain* get_domain(int cpu){
+  struct cpu_desc* curr;
+  // Browse cpu structures until the one running this code is found
+  for(curr=machine->all_cpus; curr; curr=curr->all_next){
+    if(curr->lapic == cpu){
+      return curr->domain;
+    }
+  }
+
+  return 0;
+}
+
+
+void forall_domain(void (*f)(void*, void*), void* args){
+  struct domain* curr_dom;
+
+  // Browse all cpu of a given domain
+  for(curr_dom=machine->all_domains; curr_dom; curr_dom=curr_dom->all_next){
+    f(curr_dom, args);
+  }
+}
+
+void forall_cpu(void (*f)(void*, void*), void* args){
+  struct cpu_desc* curr_cpu;
+
+  // Browse all cpu of a given domain
+  for(curr_cpu=machine->all_cpus; curr_cpu; curr_cpu=curr_cpu->all_next){
+    f(curr_cpu, args);
+  }
+}
+
+
+static inline void count(void* v, void* args){
+  int* n = args;
+
+  *n = *n+1;
+}
+
+int get_nb_domain(void){
+  int n = 0;
+
+  forall_domain(count, &n);
+
+  return n;
+}
+
+int get_nb_cpu(void){
+  int n = 0;
+
+  forall_cpu(count, &n);
+
+  return n;
+}
+
+
+int get_nb_cpu_in_domain(struct domain* d){
+  int n = 0;
+  struct cpu_desc* curr_cpu;
+
+  // Browse all cpu of a given domain
+  for(curr_cpu=d->cpus; curr_cpu; curr_cpu=curr_cpu->next){
+    ++n;
+  }
+
+  return n;
+}
+
+
+
+
 void print_cpu(struct cpu_desc* cpu){
   printf("(%p) CPU id %d\n", cpu, cpu->lapic);
 }
@@ -446,6 +516,7 @@ void print_memrange(struct memrange* memrange){
     memrange, memrange->start, memrange->start + memrange->length
   );
 }
+
 
 
 // Print the topology of the entire machine
