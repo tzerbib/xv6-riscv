@@ -1,3 +1,4 @@
+#include <stdint.h>
 #define FDT_MAGIC           0xd00dfeed
 #define FDT_BEGIN_NODE      0x00000001
 #define FDT_END_NODE        0x00000002
@@ -12,8 +13,10 @@
 #define FDT_PHANDLE         "phandle"
 #define FDT_REG             "reg"
 #define FDT_MMOD_RES        "mmode_resv"
+#define FDT_CPUS_NODE       "cpus"
+#define FDT_CPU_NODE        "cpu@"
+#define FDT_CPU_PROP        "cpu"
 #define FDT_MEMORY          "memory@"
-#define FDT_CPU             "cpu@"
 #define FDT_NUMA_DOMAIN     "numa-node-id"
 #define FDT_RESERVED_MEM    "reserved-memory"
 
@@ -93,7 +96,13 @@ static inline uint32_t bigToLittleEndian32(const uint32_t *p)
 }
 
 
+// Skip property content in dtb node
 static inline void* skip_fd_prop(const uint32_t* p){
-  // Skip property content
   return (uint32_t*)((char*)p + 8 + bigToLittleEndian32(p+1));
+}
+
+
+// Return address of the next node of same level in dtb or the end of the dtb
+static inline const uint32_t* skip_fd_node(const void* node){
+  return applySubnodes(node, 0, 0);
 }

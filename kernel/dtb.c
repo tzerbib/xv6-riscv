@@ -109,7 +109,11 @@ applySubnodes(const void* node, const uint32_t* (*f)(const void*, void*), void* 
         break;
       
       case FDT_BEGIN_NODE:
-        i = f(i, args);
+        if(f)
+          i = f(i, args);
+        // Skip all subnodes nodes
+        else
+          i = applySubnodes(i, 0, 0);
         break;
       
       case FDT_PROP:
@@ -396,7 +400,13 @@ void print_property(char* prop_name, char* value, uint32_t size, void* param){
     }
   }
 
+  // Case numa-node-id
   else if(!memcmp(prop_name, FDT_NUMA_DOMAIN, sizeof(FDT_NUMA_DOMAIN))){
+    printf(": %d", bigToLittleEndian32((uint32_t*)value));
+  }
+
+  // Case cpu
+  else if(!memcmp(prop_name, FDT_CPU_PROP, sizeof(FDT_CPU_PROP))){
     printf(": %d", bigToLittleEndian32((uint32_t*)value));
   }
 

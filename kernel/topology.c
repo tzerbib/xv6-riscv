@@ -27,6 +27,7 @@ struct {
 
 
 const void* reserved_node = 0;
+uint32_t current_domain = 0;
 
 
 // Ensure that there is enought space for a structure to be added
@@ -198,6 +199,28 @@ void __freerange(ptr_t addr, ptr_t range, void* param){
 
 
 
+const uint32_t*
+get_current_domain(const void* node, void* param){
+  uint32_t cpu;
+
+  // Check only "cpu@" nodes
+  if(memcmp((uint32_t*)node+1, FDT_CPU_NODE, sizeof(FDT_CPU_NODE)-1))
+    return skip_fd_node(node);
+
+  // Get cpu id and compare with current cpu
+  if(!get_prop(node, FDT_REG, sizeof(FDT_REG), &cpu))
+    panic("In get_current_domain, no cpu id");
+  
+  if(cpu != cpuid())
+    return skip_fd_node(node);
+
+  // Store domain of current cpu
+  get_prop(node, FDT_NUMA_DOMAIN, sizeof(FDT_NUMA_DOMAIN), &current_domain);
+
+  return fdt.fd_struct_end;
+}
+
+
 // Parse the DTB and allocate memory ranges according to "memory@<addr>" nodes.
 const uint32_t*
 freerange_node(const void* node, void* param){
@@ -210,10 +233,17 @@ freerange_node(const void* node, void* param){
   char* name = (char*)((uint32_t*)node+1);
   if(!memcmp(name, FDT_MEMORY, sizeof(FDT_MEMORY)-1)){
     struct args_parse_reg args_reg;
-    args_reg.c = param;
-    args_reg.f = __freerange;
+    
+    uint32_t numa_node;
+    get_prop(node, FDT_NUMA_DOMAIN, sizeof(FDT_NUMA_DOMAIN), &numa_node);
 
-    applyProperties(node, parse_reg, &args_reg);
+    if(numa_node == current_domain){
+      args_reg.c = param;
+      args_reg.f = __freerange;
+
+      applyProperties(node, parse_reg, &args_reg);
+    }
+    
   }
 
   const uint32_t* next = applySubnodes(node, freerange_node, &c);
@@ -227,6 +257,11 @@ freerange(void)
   struct cells cell = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
 
   reserved_node = get_node(FDT_RESERVED_MEM, sizeof(FDT_RESERVED_MEM));
+
+  const void* node_cpus = get_node(FDT_CPUS_NODE, sizeof(FDT_CPUS_NODE));
+  applySubnodes(node_cpus, get_current_domain, 0);
+
+  printf("In freerange, domain is %d\n\n", current_domain);
 
   freerange_node(fdt.fd_struct, &cell);
 }
@@ -268,7 +303,7 @@ compute_topology(const void* node, void* param){
   char* c = (char*)((uint32_t*)node+1);
 
   // Case node name starts with "cpu@"
-  if(!memcmp(c, FDT_CPU, sizeof(FDT_CPU)-1)){
+  if(!memcmp(c, FDT_CPU_NODE, sizeof(FDT_CPU_NODE)-1)){
     uint32_t domain, id;
 
     if(!get_prop(node, FDT_NUMA_DOMAIN, sizeof(FDT_NUMA_DOMAIN), &domain)){

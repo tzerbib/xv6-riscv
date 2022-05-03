@@ -7,8 +7,12 @@
 
 volatile static int started = 0;
 
+volatile static int my_test = 0;
+
+
 extern void _entry(void);
 char* p_entry;         // first physical address of kernel.
+extern char end[];            // first address after kernel.
 
 // keep each CPU's hartid in its tp register, for cpuid().
 // Initially done in start (start.c)
@@ -17,12 +21,17 @@ static inline void inithartid(unsigned long hartid){
 }
 
 
-static inline void wakeup_cores(void* cpu_desc, void* args){
-  struct cpu_desc* cpu = cpu_desc;
-  uint32_t* boot_hart = args;
+static void kexec(void* domain, void* args){
+  struct domain* d = domain;
 
-  if(cpu->lapic != *boot_hart)
-    sbi_start_hart(cpu->lapic, (unsigned long)&_entry, 0);
+  // Avoid domain from main boot hart
+  if(my_domain() == d) return;
+
+  // Copy kernel text data and BSS
+  // memmove(, _entry, end-_entry);
+
+  // Wake up hart
+  sbi_start_hart(d->cpus->lapic, (unsigned long)&_entry, 0);
 }
 
 
@@ -58,20 +67,20 @@ main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_kstart)
     add_numa();
     finalize_topology();
     assign_freepages((void*) dtb_pa);
-    printf("\n\n--- Computed topology (old kalloc): ---\n\n");
+    printf("\n\n--- Computed topology: ---\n\n");
     print_topology();
     print_struct_machine_loc();
     printf("\n\n");
 
-    init_topology();
-    add_numa();
-    finalize_topology();
-    assign_freepages((void*) dtb_pa);
-    free_machine();
-    printf("\n\n--- Computed topology (new kalloc): ---\n\n");
-    print_topology();
-    print_struct_machine_loc();
-    printf("\n\n");
+    // init_topology();
+    // add_numa();
+    // finalize_topology();
+    // assign_freepages((void*) dtb_pa);
+    // free_machine();
+    // printf("\n\n--- Computed topology (new kalloc): ---\n\n");
+    // print_topology();
+    // print_struct_machine_loc();
+    // printf("\n\n");
 
 
     kvminithart();   // turn on paging
@@ -90,8 +99,8 @@ main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_kstart)
 
 
     // Wake up all other cores by sending an ipi to them
-    forall_cpu(wakeup_cores, &hartid);
-
+    forall_domain(kexec, 0);
+    my_test = 42;
 
     __sync_synchronize();
     started = 1;
