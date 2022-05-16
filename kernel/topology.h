@@ -23,11 +23,12 @@ struct cpu_desc{
 
 struct memrange{
   void* start;                 // Virtual starting address of the memory range
-  uint64_t length;             // Length of the memory range
+  ptr_t length;                // Length of the memory range
+  uint8_t reserved;            // Is this memory region reserved (i.e. firmware)
   struct domain* domain;       // Domain associated with this memory range
   struct memrange* next;       // Next memory range on the same domain
   struct memrange* all_next;   // Next memory range in the global list
-}__attribute__((packed));
+};
 
 
 struct domain{

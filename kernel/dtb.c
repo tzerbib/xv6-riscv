@@ -457,36 +457,15 @@ void print_dtb(){
 }
 
 
-void __is_reserved(char* name, char* value, uint32_t size, void* param){
+void __is_reserved(ptr_t addr, ptr_t range, void* param){
   struct args_reserved* args = param;
 
-  // Look for property "reg" (already in "reserved-memory/mmresv")
-  if(!memcmp(FDT_REG, name, sizeof(FDT_REG))){
-    for(int k=0; k<size/(4*(args->c->address_cells+args->c->size_cells)); ++k){
-      ptr_t addr = 0;
-      ptr_t range = 0;
-      for(int j=0; j<args->c->address_cells;++j){
-        addr |= ((ptr_t)bigToLittleEndian32((uint32_t*)value+k*(args->c->address_cells+args->c->size_cells)+j)) << 32*(args->c->address_cells-j-1);
-      }
-      
-      for(int j=0; j<args->c->size_cells;++j){
-        range |= (ptr_t)(bigToLittleEndian32((uint32_t*)value+k*(args->c->address_cells+args->c->size_cells)+args->c->address_cells+j)) << 32*(args->c->size_cells-j-1);
-      }
-
-      range += addr;
-
-      if((ptr_t)args->addr >= addr && (ptr_t)args->addr < range){
-        *args->reserved = 1;
-        return;
-      }
-    }
+  if((ptr_t)args->addr >= addr && (ptr_t)args->addr < addr+range){
+    *args->reserved = 1;
+    return;
   }
 }
 
-
-const uint32_t* get_all_res(const void* node, void* args){
-  return applyProperties(node, __is_reserved, args);
-}
 
 unsigned char is_reserved(const void* reserved_node, ptr_t addr){
   if(!reserved_node)
@@ -497,12 +476,15 @@ unsigned char is_reserved(const void* reserved_node, ptr_t addr){
   get_prop(reserved_node, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS), &c.size_cells);
 
   struct args_reserved args;
+  struct args_parse_reg args_reg;
   unsigned char is_res = 0;
   args.reserved = &is_res;
-  args.c = &c;
   args.addr = (void*)addr;
+  args_reg.c = &c;
+  args_reg.args = &args;
+  args_reg.f = __is_reserved;
   
-  applySubnodes(reserved_node, get_all_res, &args);
+  applySubnodes(reserved_node, get_all_res, &args_reg);
 
   return *args.reserved;
 }

@@ -30,6 +30,13 @@ const void* reserved_node = 0;
 uint32_t current_domain = 0;
 
 
+struct args_excl_reserved{
+  ptr_t* addr;
+  ptr_t* range;
+  uint32_t* domain;
+};
+
+
 // Ensure that there is enought space for a structure to be added
 void ensure_space(uint64_t length){
   // Each page contain a pointer to the next one
@@ -152,7 +159,7 @@ void* find_memrange(struct machine* m, void* addr){
 }
 
 
-void* add_memrange(uint32_t domain_id, void* start, uint64_t length){
+void* add_memrange(uint32_t domain_id, void* start, uint64_t length, uint8_t reserved){
   // Ensure that all the structure will fit in one page
   ensure_space(sizeof(struct memrange));
   struct memrange* new_memrange = (struct memrange*) numa_allocator.topology_end;
@@ -164,6 +171,7 @@ void* add_memrange(uint32_t domain_id, void* start, uint64_t length){
   // Fill the structure information
   new_memrange->start = start;
   new_memrange->length = length;
+  new_memrange->reserved = reserved;
   struct domain* d = find_domain(wip_machine, domain_id, 1);
   new_memrange->domain = d;
   new_memrange->next = d->memranges;
@@ -261,34 +269,82 @@ freerange(void)
   const void* node_cpus = get_node(FDT_CPUS_NODE, sizeof(FDT_CPUS_NODE));
   applySubnodes(node_cpus, get_current_domain, 0);
 
-  printf("In freerange, domain is %d\n\n", current_domain);
-
   freerange_node(fdt.fd_struct, &cell);
+}
+
+
+void __exclude_reserved(ptr_t addr, ptr_t range, void* param){
+  struct args_excl_reserved* args = param;
+  void compute_ranges(ptr_t, ptr_t, void*);
+  ptr_t r_addr = 0;
+  ptr_t r_range = 0;
+
+  // Case reserved memory in between the border of the tested memory range
+  if(*args->addr < addr && *args->addr+*args->range > addr+range){
+    // Treat end of memory range separately
+    compute_ranges(addr+range, *args->addr+*args->range-(addr+range), args->domain);
+    *args->range = addr+range - *args->addr;
+  }
+
+  // Case start of the memrange in a reserved area
+  if(*args->addr >= addr && *args->addr < addr+range){
+    r_addr = *args->addr;
+    r_range = (addr+range < *args->addr+*args->range)? addr+range - r_addr : *args->addr+range;
+    *args->range = ((addr+range) - r_addr < *args->range)? *args->range - ((addr+range) - r_addr) : 0;
+    *args->addr = addr+range;
+  }
+
+  // Case end of the memrange in a reserved area
+  else if(*args->addr+*args->range > addr && *args->addr+*args->range <= addr+range){
+    r_addr = addr;
+    r_range = *args->addr + *args->range - addr;
+    *args->range = addr - *args->addr;
+  }
+
+  // Allocate the reserved memory range
+  if(r_range){
+    add_memrange(*args->domain, (void*)r_addr, r_range, 1);
+    kvmmap(kernel_pagetable, r_addr, r_addr, r_range, PTE_R | PTE_X);
+  }
+}
+
+
+void exclude_reserved(ptr_t* addr, ptr_t* range, uint32_t domain){
+  if(!reserved_node)
+    return;
+
+  struct cells c = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
+  get_prop(reserved_node, FDT_ADDRESS_CELLS, sizeof(FDT_ADDRESS_CELLS), &c.address_cells);
+  get_prop(reserved_node, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS), &c.size_cells);
+
+  struct args_excl_reserved args;
+  struct args_parse_reg args_reg;
+  args.addr = addr;
+  args.range = range;
+  args.domain = &domain;
+  args_reg.c = &c;
+  args_reg.args = &args;
+  args_reg.f = __exclude_reserved;
+  
+  applySubnodes(reserved_node, get_all_res, &args_reg);
 }
 
 
 void compute_ranges(ptr_t addr, ptr_t range, void* param){
   uint32_t* domain = param;
 
-  add_memrange(*domain, (void*)addr, range);
+  // Avoid reserved sections
+  exclude_reserved(&addr, &range, *domain);
 
-  // Avoid remap while reallocating the topology structure
-  if(walk(kernel_pagetable, addr, 0)) return;
+  // Avoid DTB pages
+  struct args_excl_reserved args;
+  args.addr = &addr;
+  args.range = &range;
+  args.domain = domain;
+  __exclude_reserved(PGROUNDDOWN((ptr_t)fdt.dtb_start), PGROUNDUP((ptr_t)fdt.dtb_end)-PGROUNDDOWN((ptr_t)fdt.dtb_start), &args);
 
-  while(range > 0){
-    // Map kernel text executable and read-only.
-    if((((char*)addr >= p_entry && (char*)addr < etext))
-    || is_reserved(reserved_node, addr)){
-      kvmmap(kernel_pagetable, addr, addr, PGSIZE, PTE_R | PTE_X);
-    }
-    // Map kernel data and the physical RAM we'll make use of.
-    else{
-      kvmmap(kernel_pagetable, addr, addr, PGSIZE, PTE_R | PTE_W);
-    }
-    
-    addr += PGSIZE;
-    range -= PGSIZE;
-  }
+  add_memrange(*domain, (void*)addr, range, 0);
+  kvmmap(kernel_pagetable, addr, addr, range, PTE_R | PTE_W | PTE_X);
 }
 
 
@@ -546,10 +602,12 @@ void print_cpu(struct cpu_desc* cpu){
 
 
 void print_memrange(struct memrange* memrange){
-  printf(
-    "(%p) Memory range: %p -- %p\n",
-    memrange, memrange->start, memrange->start + memrange->length
-  );
+  printf("(%p) Memory range ", memrange);
+  if(memrange->reserved)
+    printf("(resv)");
+  else
+   printf("      ");
+  printf(": %p -- %p\n", memrange->start, memrange->start + memrange->length);
 }
 
 

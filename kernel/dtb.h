@@ -73,7 +73,6 @@ struct args_get_node{
 struct args_reserved{
   const void* addr;
   unsigned char* reserved;
-  const struct cells* c;
 };
 
 
@@ -105,4 +104,9 @@ static inline void* skip_fd_prop(const uint32_t* p){
 // Return address of the next node of same level in dtb or the end of the dtb
 static inline const uint32_t* skip_fd_node(const void* node){
   return applySubnodes(node, 0, 0);
+}
+
+
+static inline const uint32_t* get_all_res(const void* node, void* args){
+  return applyProperties(node, parse_reg, args);
 }

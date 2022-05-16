@@ -74,7 +74,7 @@ LD = $(TOOLPREFIX)ld
 OBJCOPY = $(TOOLPREFIX)objcopy
 OBJDUMP = $(TOOLPREFIX)objdump
 
-CFLAGS = -Wall -Werror -Og -fno-omit-frame-pointer -ggdb
+CFLAGS = -Wall -Werror -O0 -fno-omit-frame-pointer -ggdb
 CFLAGS += -MD
 CFLAGS += -mcmodel=medany
 CFLAGS += -ffreestanding -fno-common -nostdlib -mno-relax
@@ -85,10 +85,10 @@ CFLAGS += -DKERNBASE=$(KERNBASE)
 
 # Disable PIE when possible (for Ubuntu 16.10 toolchain)
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]no-pie'),)
-CFLAGS += -fno-pie -no-pie
+CFLAGS += -fpie -pie -fPIC
 endif
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]nopie'),)
-CFLAGS += -fno-pie -nopie
+CFLAGS += -fpie -pie -fPIC
 endif
 
 LDFLAGS = -z max-page-size=4096 -Ttext $(KERNBASE)
