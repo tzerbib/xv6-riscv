@@ -12,11 +12,7 @@ _entry:
         # with a 4096-byte stack per CPU.
         # sp = stack0 + (hartid * 4096)
         la sp, stack0
-        li a4, 4096
-        addi a3,a0,1
-        mul a4,a4,a3
-        add sp,sp,a4
-	# jump to start() in start.c
         call main
+
 spin:
         j spin
