@@ -20,6 +20,7 @@
 
 #define SBI_EXT_HSM                      0x48534D
 #define SBI_EXT_HSM_HART_START           0
+#define SBI_EXT_HSM_HART_STOP            1
 
 #define SBI_SEND_IPI                     0x4
 
@@ -102,6 +103,16 @@ void sbi_start_hart(const unsigned long hart_id, unsigned long addr, unsigned lo
   }
 
   panic("sbi_start_hart");
+}
+
+
+void sbi_stop_hart(void){
+  struct sbiret ret;
+  ret = sbi_ecall(SBI_EXT_HSM, SBI_EXT_HSM_HART_STOP, 0, 0, 0, 0, 0, 0);
+
+  if(ret.error == SBI_ERR_FAILED){
+    panic("Failed to stop currently running hart");
+  }
 }
 
 

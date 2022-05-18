@@ -6,12 +6,12 @@
 #include "topology.h"
 
 
-volatile static int started = 0;
 volatile static int my_test = 0;
 
-extern void _entry(void);
-char* p_entry;         // first physical address of kernel.
-extern char end[];            // first address after kernel.
+extern void _boot(void);
+extern char* p_entry;              // first physical address of kernel.
+extern char end[];                 // first address after kernel.
+extern struct machine* machine;    // Beginning of whole machine structure
 
 // keep each CPU's hartid in its tp register, for cpuid().
 // Initially done in start (start.c)
@@ -20,7 +20,7 @@ static inline void inithartid(unsigned long hartid){
 }
 
 
-static void kexec(void* domain, void* args){
+void kexec(void* domain, void* args){
   struct domain* d = domain;
   struct memrange *mr;
 
@@ -28,7 +28,7 @@ static void kexec(void* domain, void* args){
   // Avoid domain from main boot hart
   if(my_domain() == d) return;
 
-  ptr_t ksize = end - (char*)_entry;
+  ptr_t ksize = end - (char*)_boot;
 
   // Get an arbitrary memory range large enough to place the kernel
   for(mr=d->memranges; mr && mr->length < ksize && mr->reserved; mr=mr->next);
@@ -42,7 +42,7 @@ static void kexec(void* domain, void* args){
   }
 
   // Copy kernel text data and BSS
-  memmove(mr->start, _entry, ksize);
+  memmove(mr->start, _boot, ksize);
 
   // Wake up an arbitrary hart of the domain
   sbi_start_hart(d->cpus->lapic, (unsigned long)mr->start, 0);
@@ -51,7 +51,7 @@ static void kexec(void* domain, void* args){
 
 // start() jumps here in supervisor mode on all CPUs.
 void
-main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_kstart)
+main(unsigned long hartid, ptr_t dtb_pa)
 {
   inithartid(hartid);
 
@@ -60,8 +60,7 @@ main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_kstart)
   // w_mideleg(0xffff);
   w_sie(r_sie() | SIE_SEIE | SIE_STIE | SIE_SSIE);
 
-  if(dtb_pa != 0){
-    p_entry = (void*) p_kstart;
+  if(hartid == 0){
     consoleinit();
     printfinit();
     printf("\n");
@@ -86,6 +85,11 @@ main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_kstart)
     print_struct_machine_loc();
     printf("\n\n");
 
+    // Ensure that the kernel text is in the local memory
+    struct memrange* mr = find_memrange(machine, main);
+    if(mr->domain != my_domain())
+      panic("kernel text is on a distant memory range: unimplemented");
+
 
     kvminithart();   // turn on paging
     procinit();      // process table
@@ -104,7 +108,6 @@ main(unsigned long hartid, ptr_t dtb_pa, ptr_t p_kstart)
     my_test = 42;
 
     __sync_synchronize();
-    started = 1;
   } else {
     printf("Hart %d started\n", cpuid());
     __sync_synchronize();

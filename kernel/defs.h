@@ -206,6 +206,7 @@ const uint32_t* print_dt_node(const void*, void*);
 unsigned char is_reserved(const void*, ptr_t);
 
 // topology.c
+struct machine;
 void init_topology(void);
 void finalize_topology(void);
 void add_numa(void);
@@ -213,8 +214,10 @@ void print_topology(void);
 void assign_freepages(void*);
 void free_machine(void);
 void print_struct_machine_loc(void);
+void* find_memrange(struct machine*, void*);
 
 // ipi.c
 void sbi_get_spec_version(void);
 void sbi_start_hart(const unsigned long, unsigned long, unsigned long);
+void sbi_stop_hart(void);
 void sbi_send_ipi(const unsigned long*);

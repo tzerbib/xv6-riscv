@@ -16,7 +16,7 @@ extern pte_t* walk(pagetable_t, uint64, int);
 extern struct fdt_repr fdt;
 
 
-struct machine* machine = 0;   // Beginning of whole machine structure
+struct machine* machine = 0;       // Beginning of whole machine structure
 struct machine* wip_machine = 0;   // Machine structure while in construction
 struct machine* old_machine = 0;   // Old Machine structure not yet freed
 
