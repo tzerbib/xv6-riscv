@@ -37,6 +37,8 @@
 #define NB_HARTS 2
 #endif
 
+#define MAX_NB_HARTS_PER_SOCKET 512
+
 #define NB_HARTS_PER_SOCKET (NB_HARTS/NB_SOCKETS)
 #define HART_SOCKETID(hartid) ((hartid)/NB_HARTS_PER_SOCKET)
 #define HARTID_IN_SOCKET(hartid) ((hartid)-HART_SOCKETID(hartid)*NB_HARTS_PER_SOCKET)
@@ -81,7 +83,7 @@
 // priority threshold and claim/complete registers for each mode (2: machine and
 // supervisor) for the maximum possible number of CPUs per socket (8).
 // This is the size of one socket's PLIC.
-#define PLIC_SZ                     (PLIC_PRIOTHRESH_OFF + 2*8*PLIC_PRIOTHRESH_CONTEXTSZ)
+#define PLIC_SZ                     (PLIC_PRIOTHRESH_OFF + 2*MAX_NB_HARTS_PER_SOCKET*PLIC_PRIOTHRESH_CONTEXTSZ)
 
 #define PLIC_PRIORITY(socketid, irqid) (PLIC + (socketid)*PLIC_SZ + PLIC_PRIORITY_OFF + (irqid)*PLIC_PRIORITY_SZ)
 #define PLIC_SENABLE(hartid) (PLIC + HART_SOCKETID(hartid)*PLIC_SZ + PLIC_ENABLE_OFF + HARTID_IN_SOCKET(hartid)*2*PLIC_ENABLE_CONTEXTSZ + PLIC_ENABLE_CONTEXTSZ)
