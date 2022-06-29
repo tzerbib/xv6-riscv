@@ -456,6 +456,7 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
+  unsigned int t = 0;
   
   c->proc = 0;
   for(;;){
@@ -463,8 +464,11 @@ scheduler(void)
     intr_on();
 
     for(p = proc; p < &proc[NPROC]; p++) {
+      // printf("acquiring %p (%d)\n", &p->lock, t);
+      t++;
       acquire(&p->lock);
-      if(p->state == RUNNABLE) {
+      if(p->state == RUNNABLE){
+        // printf("proc %p runnable (%d)\n", p, t);
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.

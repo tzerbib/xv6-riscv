@@ -146,8 +146,10 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   for(;;){
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
-    if(*pte & PTE_V)
+    if(*pte & PTE_V){
+      printf("%p already mapped at %p\n", a, PTE2PA(*pte));
       panic("mappages: remap");
+    }
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;
@@ -429,4 +431,34 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+
+// Modify permissions of the page mapping the virtual address va
+// if type is 0, the permissions of the page are set to perm
+// if type is 1, the permissions perm are added
+// if type is -1, the permissions perm are removed
+// return -1 if the virtual address va has no mapping
+int
+vmperm(ptr_t start, ptr_t size, uint16_t perm, int type){
+  pte_t* p;
+  for(ptr_t i=PGROUNDDOWN(start); i<start+size; i+=PGSIZE){
+    p = walk(kernel_pagetable, i, 0);
+    if(!*p)
+      return -1;
+
+    switch(type){
+      case 0:
+        *p = perm;
+        break;
+      case 1:
+        *p |= perm;
+        break;
+      case -1:
+        *p &= !perm;
+        break;
+    }
+  }
+
+  return 0;
 }

@@ -4,10 +4,11 @@
 #include "defs.h"
 #include "acpi.h"
 #include "dtb.h"
+#include <stdint.h>
 
 
 extern struct kmem kmem;
-extern char end[];            // first address after kernel.
+extern ptr_t ksize;
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 extern char* p_entry;         // first physical address of kernel.
 extern pagetable_t kernel_pagetable;
@@ -16,9 +17,9 @@ extern pte_t* walk(pagetable_t, uint64, int);
 extern struct fdt_repr fdt;
 
 
-struct machine* machine = 0;       // Beginning of whole machine structure
-struct machine* wip_machine = 0;   // Machine structure while in construction
-struct machine* old_machine = 0;   // Old Machine structure not yet freed
+struct machine* machine;       // Beginning of whole machine structure
+struct machine* wip_machine;   // Machine structure while in construction
+struct machine* old_machine;   // Old Machine structure not yet freed
 
 struct {
   void* topology_end;          // Next empty place for machine substructures
@@ -26,8 +27,8 @@ struct {
 }numa_allocator;
 
 
-const void* reserved_node = 0;
-uint32_t current_domain = 0;
+const void* reserved_node;
+uint32_t current_domain;
 
 
 struct args_excl_reserved{
@@ -58,7 +59,11 @@ void ensure_space(uint64_t length){
 }
 
 
-void init_topology(){
+void init_topology(uint32_t domain){
+  current_domain = domain;
+  machine = 0;
+  old_machine = 0;
+
   wip_machine = 0;
   numa_allocator.topology_end = 0;
   numa_allocator.remaining = 0;
@@ -191,7 +196,7 @@ void __freerange(ptr_t addr, ptr_t range, void* param){
   char *p = (char*)PGROUNDDOWN(addr);
   for(; p + PGSIZE <= (char*)addr+range; p += PGSIZE){
     // Avoid freeing the kernel and OpenSBI
-    if(((p >= p_entry && p < end)) || is_reserved(reserved_node, (ptr_t)p))
+    if(((p >= p_entry && p < p_entry+ksize)) || is_reserved(reserved_node, (ptr_t)p))
       continue;
 
     // Avoid DTB
@@ -251,7 +256,6 @@ freerange_node(const void* node, void* param){
 
       applyProperties(node, parse_reg, &args_reg);
     }
-    
   }
 
   const uint32_t* next = applySubnodes(node, freerange_node, &c);
@@ -262,6 +266,7 @@ freerange_node(const void* node, void* param){
 void
 freerange(void)
 {
+  numa_ready = 0;
   struct cells cell = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
 
   reserved_node = get_node(FDT_RESERVED_MEM, sizeof(FDT_RESERVED_MEM));
@@ -344,7 +349,7 @@ void compute_ranges(ptr_t addr, ptr_t range, void* param){
   __exclude_reserved(PGROUNDDOWN((ptr_t)fdt.dtb_start), PGROUNDUP((ptr_t)fdt.dtb_end)-PGROUNDDOWN((ptr_t)fdt.dtb_start), &args);
 
   add_memrange(*domain, (void*)addr, range, 0);
-  kvmmap(kernel_pagetable, addr, addr, range, PTE_R | PTE_W | PTE_X);
+  kvmmap(kernel_pagetable, addr, addr, range, PTE_R | PTE_W);
 }
 
 

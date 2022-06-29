@@ -4,11 +4,12 @@
 #include "riscv.h"
 #include "defs.h"
 
-void main();
+void boot();
 void timerinit();
 
 // entry.S needs one stack per CPU.
-__attribute__ ((aligned (16))) char stack0[PGSIZE*2];
+__attribute__ ((aligned (16))) char stack0[PGSIZE];
+__attribute__ ((aligned (16))) char stack1[PGSIZE];
 
 // a scratch area per CPU for machine-mode timer interrupts.
 uint64 timer_scratch[NCPU][5];
@@ -28,7 +29,7 @@ start()
 
   // set M Exception Program Counter to main, for mret.
   // requires gcc -mcmodel=medany
-  w_mepc((uint64)main);
+  w_mepc((uint64)boot);
 
   // disable paging for now.
   w_satp(0);

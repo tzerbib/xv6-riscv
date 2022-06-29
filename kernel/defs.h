@@ -1,3 +1,4 @@
+#include <stdint.h>
 struct buf;
 struct context;
 struct file;
@@ -173,6 +174,8 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+int             vmperm(ptr_t, ptr_t, uint16_t, int);
+
 
 // plic.c
 void            plicinit(void);
@@ -207,11 +210,13 @@ unsigned char is_reserved(const void*, ptr_t);
 
 // topology.c
 struct machine;
-void init_topology(void);
+struct domain;
+void init_topology(uint32_t);
 void finalize_topology(void);
 void add_numa(void);
 void print_topology(void);
 void assign_freepages(void*);
+void* kalloc_node(struct domain* d);
 void free_machine(void);
 void print_struct_machine_loc(void);
 void* find_memrange(struct machine*, void*);

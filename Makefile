@@ -83,13 +83,16 @@ CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 &
 CFLAGS += -DNB_SOCKETS=$(NODES) -DNB_HARTS=$(CPUS)
 CFLAGS += -DKERNBASE=$(KERNBASE)
 
-# Disable PIE when possible (for Ubuntu 16.10 toolchain)
+# Enable Portable Independent Executable
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]no-pie'),)
 CFLAGS += -fpie -pie -fPIC
+ASFLAGS += -fpie -pie -fPIC
 endif
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]nopie'),)
 CFLAGS += -fpie -pie -fPIC
+ASFLAGS += -fpie -pie -fPIC
 endif
+
 
 LDFLAGS = -z max-page-size=4096 -Ttext $(KERNBASE)
 
@@ -155,8 +158,8 @@ UPROGS=\
 	$U/_wc\
 	$U/_zombie\
 
-fs.img: mkfs/mkfs README $(UPROGS)
-	mkfs/mkfs fs.img README $(UPROGS)
+fs.img: mkfs/mkfs README $(UPROGS) $K/kernel
+	mkfs/mkfs fs.img README $(UPROGS) $K/kernel
 
 -include kernel/*.d user/*.d
 
