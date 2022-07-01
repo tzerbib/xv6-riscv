@@ -11,3 +11,4 @@
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
 #define FSSIZE       1000  // size of file system in blocks
 #define MAXPATH      128   // maximum file path name
+#define SCHED_INTERVAL     1000000L  // scheduler interval in cycles (about 1/10th second in Qemu)

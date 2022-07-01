@@ -43,21 +43,6 @@
 #define HART_SOCKETID(hartid) ((hartid)/NB_HARTS_PER_SOCKET)
 #define HARTID_IN_SOCKET(hartid) ((hartid)-HART_SOCKETID(hartid)*NB_HARTS_PER_SOCKET)
 
-// core local interruptor (CLINT), which contains the timer.
-//[numa] There is one CLINT per NUMA socket.
-//[numa] For xv6, QEMU is run without aclint=on, so a legacy SiFive CLINT is
-// emulated.
-#define CLINT               0x2000000L      // Base address of all CLINTs
-//[numa] Offsets are within one socket's CLINT.
-#define CLINT_MSWI_OFF      0x0
-#define CLINT_MTIMER_OFF    0x4000
-#define CLINT_MTIME_OFF     0x7ff8
-#define CLINT_MTIMECMP_SZ   0x8
-#define CLINT_SZ            0x10000         // Size of one CLINT
-
-#define CLINT_MTIMECMP(hartid) (CLINT + HART_SOCKETID(hartid)*CLINT_SZ + CLINT_MTIMER_OFF + HARTID_IN_SOCKET(hartid)*CLINT_MTIMECMP_SZ)
-#define CLINT_MTIME(hartid) (CLINT + HART_SOCKETID(hartid)*CLINT_SZ + CLINT_MTIMER_OFF + CLINT_MTIME_OFF) // cycles since boot
-
 // qemu puts platform-level interrupt controller (PLIC) here.
 //[numa] There is one PLIC per NUMA socket.
 #define PLIC                        0x0c000000L     // Base address of all PLICs
@@ -99,7 +84,10 @@
 #ifndef KERNBASE
 #define KERNBASE 0x80200000L
 #endif
-#define PHYSTOP (KERNBASE + 128*1024*1024)
+//#define PHYSTOP (KERNBASE + 128*1024*1024)
+//TODO for now, only use RAM up to the DTB's address
+// Need more work to parse and skip the DTB
+#define PHYSTOP 0x0000000082200000
 
 // map the trampoline page to the highest address,
 // in both user and kernel space.

@@ -143,6 +143,7 @@ void            syscall();
 extern uint     ticks;
 void            trapinit(void);
 void            trapinithart(void);
+void            timerinit(void);
 extern struct spinlock tickslock;
 void            usertrapret(void);
 

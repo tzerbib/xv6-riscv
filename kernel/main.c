@@ -10,6 +10,7 @@ volatile static int started = 0;
 void
 main()
 {
+  //XXX does not boot with more than one hart
   if(cpuid() == 0){
     consoleinit();
     printfinit();
@@ -17,9 +18,11 @@ main()
     printf("xv6 kernel is configured for %d sockets and %d harts\n", NB_SOCKETS, NB_HARTS);
     printf("xv6 kernel is booting on hart %d\n", cpuid());
     printf("\n");
+
     kinit();         // physical page allocator
     kvminit();       // create kernel page table
     kvminithart();   // turn on paging
+    timerinit();     // ask for clock interrupts.
     procinit();      // process table
     trapinit();      // trap vectors
     trapinithart();  // install kernel trap vector

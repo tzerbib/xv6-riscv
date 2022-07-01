@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "ecall.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -27,6 +28,7 @@ void
 trapinithart(void)
 {
   w_stvec((uint64)kernelvec);
+  w_sstatus(r_sstatus() | SSTATUS_SIE);
 }
 
 //
@@ -46,10 +48,10 @@ usertrap(void)
   w_stvec((uint64)kernelvec);
 
   struct proc *p = myproc();
-  
+
   // save user program counter.
   p->trapframe->epc = r_sepc();
-  
+
   if(r_scause() == 8){
     // system call
 
@@ -108,7 +110,7 @@ usertrapret(void)
 
   // set up the registers that trampoline.S's sret will use
   // to get to user space.
-  
+
   // set S Previous Privilege mode to User.
   unsigned long x = r_sstatus();
   x &= ~SSTATUS_SPP; // clear SPP to 0 for user mode
@@ -121,7 +123,7 @@ usertrapret(void)
   // tell trampoline.S the user page table to switch to.
   uint64 satp = MAKE_SATP(p->pagetable);
 
-  // jump to trampoline.S at the top of memory, which 
+  // jump to trampoline.S at the top of memory, which
   // switches to the user page table, restores user registers,
   // and switches to user mode with sret.
   uint64 fn = TRAMPOLINE + (userret - trampoline);
@@ -130,14 +132,14 @@ usertrapret(void)
 
 // interrupts and exceptions from kernel code go here via kernelvec,
 // on whatever the current kernel stack is.
-void 
+void
 kerneltrap()
 {
   int which_dev = 0;
   uint64 sepc = r_sepc();
   uint64 sstatus = r_sstatus();
   uint64 scause = r_scause();
-  
+
   if((sstatus & SSTATUS_SPP) == 0)
     panic("kerneltrap: not from supervisor mode");
   if(intr_get() != 0)
@@ -168,6 +170,22 @@ clockintr()
   release(&tickslock);
 }
 
+// Schedule timer interrupt.
+// It is caught by devintr which schedules the next timer interrupt infinitely.
+void
+timerinit()
+{
+  uint64 now = r_time();
+  uint64 date = now + SCHED_INTERVAL;
+
+  struct sbiret ret = sbi_ecall(SBI_EXT_TIMER, SBI_TIMER_SET_TIMER, date, 0, 0, 0, 0, 0);
+  if (ret.error != SBI_SUCCESS) {
+      printf("failed setting timer with error %x, value %x\n", ret.error, ret.value);
+      panic("failed setting timer");
+  }
+}
+
+
 // check if it's an external interrupt or software interrupt,
 // and handle it.
 // returns 2 if timer interrupt,
@@ -178,8 +196,7 @@ devintr()
 {
   uint64 scause = r_scause();
 
-  if((scause & 0x8000000000000000L) &&
-     (scause & 0xff) == 9){
+  if(scause == 0x8000000000000009L){
     // this is a supervisor external interrupt, via PLIC.
 
     // irq indicates which device interrupted.
@@ -199,22 +216,23 @@ devintr()
     if(irq)
       plic_complete(irq);
 
+    w_sip(r_sip() & ~SIP_SEIP);
+
     return 1;
   } else if(scause == 0x8000000000000001L){
-    // software interrupt from a machine-mode timer interrupt,
-    // forwarded by timervec in kernelvec.S.
-
+    // supervisor software interrupt
+    panic("supervisor software interrupt");
+  } else if(scause == 0x8000000000000005L){
     if(cpuid() == 0){
       clockintr();
     }
-    
-    // acknowledge the software interrupt by clearing
-    // the SSIP bit in sip.
-    w_sip(r_sip() & ~2);
+
+    timerinit();
+
+    w_sip(r_sip() & ~SIP_STIP);
 
     return 2;
   } else {
     return 0;
   }
 }
-
