@@ -5,7 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
-#include "ecall.h"
+#include "sbi.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -178,11 +178,7 @@ timerinit()
   uint64 now = r_time();
   uint64 date = now + SCHED_INTERVAL;
 
-  struct sbiret ret = sbi_ecall(SBI_EXT_TIMER, SBI_TIMER_SET_TIMER, date, 0, 0, 0, 0, 0);
-  if (ret.error != SBI_SUCCESS) {
-      printf("failed setting timer with error %x, value %x\n", ret.error, ret.value);
-      panic("failed setting timer");
-  }
+  sbi_set_timer(date);
 }
 
 

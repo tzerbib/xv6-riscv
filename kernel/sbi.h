@@ -54,3 +54,13 @@ static inline struct sbiret sbi_ecall(
 
   return ret;
 }
+
+struct sbi_spec_version {
+  uint32 major;
+  uint32 minor;
+};
+
+struct sbi_spec_version sbi_get_spec_version();
+void sbi_start_hart(uint32 hart_id, uint64 addr, uint64 a1);
+void sbi_send_ipi(const unsigned long *hart_mask);
+void sbi_set_timer(uint64 stime_value);
