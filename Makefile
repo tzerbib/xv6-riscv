@@ -6,7 +6,6 @@ OPENSBI_FW_JUMP=$(OPENSBI)/build/platform/generic/firmware/fw_jump.bin
 
 OBJS = \
   $K/entry.o \
-  $K/start.o \
   $K/console.o \
   $K/printf.o \
   $K/uart.o \

@@ -24,28 +24,12 @@ void sbi_start_hart(uint32 hart_id, uint64 addr, uint64 a1){
   struct sbiret ecall_ret = sbi_ecall(SBI_EXT_HSM, SBI_EXT_HSM_HART_START, hart_id, addr, a1, 0, 0, 0);
 
   switch(ecall_ret.error) {
-    case SBI_SUCCESS: {
-      printf("Start signal sended to hart %d\n", hart_id);
-      return;
-    }
-    case SBI_ERR_INVALID_ADDRESS: {
-      printf("Problem in the given starting address for hart %d\n", hart_id);
-      panic("sbi_start_hart");
-    }
-    case SBI_ERR_INVALID_PARAM: {
-      printf("Hart %d cannot be started in S mode\n", hart_id);
-      panic("sbi_start_hart");
-    }
-    case SBI_ERR_ALREADY_AVAILABLE: {
-      printf("Hart %d is already started\n", hart_id);
-      panic("sbi_start_hart");
-    }
-    case SBI_ERR_FAILED: {
-      printf("Start request failed for unknown reasons\n");
-      panic("sbi_start_hart");
-    }
-    default:
-      panic("sbi_start_hart");
+    case SBI_SUCCESS: return;
+    case SBI_ERR_INVALID_ADDRESS: panic("sbi_start_hart");
+    case SBI_ERR_INVALID_PARAM: panic("sbi_start_hart");
+    case SBI_ERR_ALREADY_AVAILABLE: panic("sbi_start_hart");
+    case SBI_ERR_FAILED: panic("sbi_start_hart");
+    default: panic("sbi_start_hart");
   }
 }
 

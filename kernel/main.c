@@ -5,12 +5,24 @@
 #include "defs.h"
 #include "sbi.h"
 
+// Entrypoint of slave harts, booted by the master hart's main.
+extern void slave_entry(uint64 hartid);
+
+// entry.S needs one stack per CPU.
+__attribute__ ((aligned (16))) char stack0[4096 * NCPU];
+
 void slave_main();
 
-// start() jumps here in the boot hart (may not be hart 0).
+// The master hart (may not be hart 0) start here after entry.S.
 void
-main()
+master_main(uint64 hartid)
 {
+  // Keep the hart ID in the tp register, for cpuid()
+  w_tp(hartid);
+
+  // Enable interrupts to supervisor level (external, timer, software)
+  w_sie(r_sie() | SIE_SEIE | SIE_STIE | SIE_SSIE);
+
   consoleinit();
   printfinit();
 
@@ -39,14 +51,18 @@ main()
     if (i == cpuid())
       continue;
 
-    sbi_start_hart(i, (uint64)slave_main, 0);
+    sbi_start_hart(i, (uint64)slave_entry, 0);
   }
 
   scheduler();
 }
 
-void slave_main() {
+void slave_main(uint64 hartid) {
   __sync_synchronize();
+
+  // Keep the hart ID in the tp register, for cpuid()
+  w_tp(hartid);
+
   printf("hart %d starting\n", cpuid());
   kvminithart();    // turn on paging
   trapinithart();   // install kernel trap vector

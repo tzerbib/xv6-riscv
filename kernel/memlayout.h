@@ -25,7 +25,7 @@
 #define VIRTIO0 0x10001000
 #define VIRTIO0_IRQ 1
 
-//[numa]XXX For now, we don't know how to discover the number of harts and
+//[numa]TODO For now, we don't know how to discover the number of harts and
 // sockets, and how they are mapped to each other.
 // Macros below assume assigning harts as qemu does it when the number of harts
 // per socket is a power of 2 (and the same for all sockets).
@@ -41,7 +41,7 @@
 
 #define NB_HARTS_PER_SOCKET (NB_HARTS/NB_SOCKETS)
 #define HART_SOCKETID(hartid) ((hartid)/NB_HARTS_PER_SOCKET)
-#define HARTID_IN_SOCKET(hartid) ((hartid)-HART_SOCKETID(hartid)*NB_HARTS_PER_SOCKET)
+#define HARTID_IN_SOCKET(hartid) ((hartid)%NB_HARTS_PER_SOCKET)
 
 // qemu puts platform-level interrupt controller (PLIC) here.
 //[numa] There is one PLIC per NUMA socket.
