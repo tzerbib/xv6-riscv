@@ -14,8 +14,7 @@ _entry:
     mul a2, a2, a3
     add sp, sp, a2
     # Jump to master hart's main
-    call master_main
-spin:
+    call master_start
     j spin
 # Slave harts (i.e., not the boot hart that runs _entry above) are started from
 # master_main at slave_entry.
@@ -30,5 +29,7 @@ slave_entry:
     mul a2, a2, a3
     add sp, sp, a2
     # Jump to start() in start.c.
-    call slave_main
+    call slave_start
+    j spin
+spin:
     j spin

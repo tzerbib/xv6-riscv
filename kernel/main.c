@@ -1,6 +1,5 @@
 #include "types.h"
 #include "param.h"
-#include "memlayout.h"
 #include "riscv.h"
 #include "defs.h"
 #include "sbi.h"
@@ -15,14 +14,8 @@ void slave_main();
 
 // The master hart (may not be hart 0) start here after entry.S.
 void
-master_main(uint64 hartid)
+master_main()
 {
-  // Keep the hart ID in the tp register, for cpuid()
-  w_tp(hartid);
-
-  // Enable interrupts to supervisor level (external, timer, software)
-  w_sie(r_sie() | SIE_SEIE | SIE_STIE | SIE_SSIE);
-
   consoleinit();
   printfinit();
 
@@ -57,13 +50,11 @@ master_main(uint64 hartid)
   scheduler();
 }
 
-void slave_main(uint64 hartid) {
+void slave_main() {
   __sync_synchronize();
 
-  // Keep the hart ID in the tp register, for cpuid()
-  w_tp(hartid);
-
   printf("hart %d starting\n", cpuid());
+
   kvminithart();    // turn on paging
   trapinithart();   // install kernel trap vector
   plicinithart();   // ask PLIC for device interrupts

@@ -31,7 +31,8 @@ OBJS = \
   $K/kernelvec.o \
   $K/plic.o \
   $K/virtio_disk.o \
-  $K/sbi.o
+  $K/sbi.o \
+  $K/start.o
 
 ifndef CPUS
 CPUS := 3
