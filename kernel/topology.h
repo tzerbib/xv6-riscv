@@ -40,12 +40,24 @@ struct domain{
 };
 
 
+void init_topology(uint32_t);
+void add_numa(void);
+void print_topology(void);
+void assign_freepages(void*);
+void* kalloc_node(struct domain* d);
+void free_machine(void);
+void print_struct_machine_loc(void);
+void* find_memrange(struct machine*, void*);
+
 struct domain* get_domain(int);
-void forall_domain(void (*f)(void*, void*), void* args);
-void forall_cpu(void (*f)(void*, void*), void* args);
+void forall_domain(void (*)(void*, void*), void*);
+void forall_cpu(void (*)(void*, void*), void*);
+void forall_memrange(void (*)(void*, void*), void*);
+void forall_cpu_in_domain(struct domain*, void (*)(void*, void*), void*);
 int get_nb_domain(void);
 int get_nb_cpu(void);
 int get_nb_cpu_in_domain(struct domain*);
+void dtb_kvmmake(void*);
 
 
 #endif // __TOPOLOGY__

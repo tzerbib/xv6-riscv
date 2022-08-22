@@ -5,6 +5,7 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "topology.h"
 
 /*
  * the kernel's page table.
@@ -25,15 +26,8 @@ kvmmake()
   kpgtbl = (pagetable_t) kalloc();
   memset(kpgtbl, 0, PGSIZE);
 
-  // uart registers
-  kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
-
-  // virtio mmio disk interface
-  kvmmap(kpgtbl, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
-
-  // PLIC
-  //[numa] There is one PLIC per NUMA socket, so map them all.
-  kvmmap(kpgtbl, PLIC, PLIC, NB_SOCKETS*PLIC_SZ, PTE_R | PTE_W);
+  // uart registers, virtio mmio disk interface and plic
+  dtb_kvmmake(kpgtbl);
 
   // Kernal text, data and RAM are mapped during topology extraction (compute_ranges)
 
@@ -108,12 +102,15 @@ walkaddr(pagetable_t pagetable, uint64 va)
     return 0;
 
   pte = walk(pagetable, va, 0);
-  if(pte == 0)
+  if(pte == 0){
     return 0;
-  if((*pte & PTE_V) == 0)
+  }
+  if((*pte & PTE_V) == 0){
     return 0;
-  if((*pte & PTE_U) == 0)
+  }
+  if((*pte & PTE_U) == 0){
     return 0;
+  }
   pa = PTE2PA(*pte);
   return pa;
 }
@@ -440,11 +437,12 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 // if type is -1, the permissions perm are removed
 // return -1 if the virtual address va has no mapping
 int
-vmperm(ptr_t start, ptr_t size, uint16_t perm, int type){
+vmperm(pagetable_t pgt, ptr_t start, ptr_t size, uint16_t perm, int type){
   pte_t* p;
   for(ptr_t i=PGROUNDDOWN(start); i<start+size; i+=PGSIZE){
-    p = walk(kernel_pagetable, i, 0);
-    if(!*p)
+    p = walk(pgt, i, 0);
+    
+    if(!p || !*p)
       return -1;
 
     switch(type){
@@ -455,7 +453,7 @@ vmperm(ptr_t start, ptr_t size, uint16_t perm, int type){
         *p |= perm;
         break;
       case -1:
-        *p &= !perm;
+        *p &= ~perm;
         break;
     }
   }

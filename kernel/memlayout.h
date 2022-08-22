@@ -17,14 +17,6 @@
 // end -- start of kernel page allocation area
 // PHYSTOP -- end RAM used by the kernel
 
-// qemu puts UART registers here in physical memory.
-#define UART0 0x10000000L
-#define UART0_IRQ 10
-
-// virtio mmio interface
-#define VIRTIO0 0x10001000
-#define VIRTIO0_IRQ 1
-
 //[numa]XXX For now, we don't know how to discover the number of harts and
 // sockets, and how they are mapped to each other.
 // Macros below assume assigning harts as qemu does it when the number of harts
@@ -37,24 +29,14 @@
 #define NB_HARTS 2
 #endif
 
+#ifndef MAX_NB_HARTS_PER_SOCKET
+#define MAX_NB_HARTS_PER_SOCKET 8
+#endif
+
 #define NB_HARTS_PER_SOCKET (NB_HARTS/NB_SOCKETS)
 #define HART_SOCKETID(hartid) ((hartid)/NB_HARTS_PER_SOCKET)
-#define HARTID_IN_SOCKET(hartid) ((hartid)-HART_SOCKETID(hartid)*NB_HARTS_PER_SOCKET)
+#define HARTID_IN_SOCKET(hartid) ((hartid)%NB_HARTS_PER_SOCKET)
 
-// core local interruptor (CLINT), which contains the timer.
-//[numa] There is one CLINT per NUMA socket.
-//[numa] For xv6, QEMU is run without aclint=on, so a legacy SiFive CLINT is
-// emulated.
-#define CLINT               0x2000000L      // Base address of all CLINTs
-//[numa] Offsets are within one socket's CLINT.
-#define CLINT_MSWI_OFF      0x0
-#define CLINT_MTIMER_OFF    0x4000
-#define CLINT_MTIME_OFF     0x7ff8
-#define CLINT_MTIMECMP_SZ   0x8
-#define CLINT_SZ            0x10000         // Size of one CLINT
-
-#define CLINT_MTIMECMP(hartid) (CLINT + HART_SOCKETID(hartid)*CLINT_SZ + CLINT_MTIMER_OFF + HARTID_IN_SOCKET(hartid)*CLINT_MTIMECMP_SZ)
-#define CLINT_MTIME(hartid) (CLINT + HART_SOCKETID(hartid)*CLINT_SZ + CLINT_MTIMER_OFF + CLINT_MTIME_OFF) // cycles since boot
 
 // qemu puts platform-level interrupt controller (PLIC) here.
 //[numa] There is one PLIC per NUMA socket.
@@ -81,7 +63,7 @@
 // priority threshold and claim/complete registers for each mode (2: machine and
 // supervisor) for the maximum possible number of CPUs per socket (8).
 // This is the size of one socket's PLIC.
-#define PLIC_SZ                     (PLIC_PRIOTHRESH_OFF + 2*8*PLIC_PRIOTHRESH_CONTEXTSZ)
+#define PLIC_SZ                     (PLIC_PRIOTHRESH_OFF + 2*MAX_NB_HARTS_PER_SOCKET*PLIC_PRIOTHRESH_CONTEXTSZ)
 
 #define PLIC_PRIORITY(socketid, irqid) (PLIC + (socketid)*PLIC_SZ + PLIC_PRIORITY_OFF + (irqid)*PLIC_PRIORITY_SZ)
 #define PLIC_SENABLE(hartid) (PLIC + HART_SOCKETID(hartid)*PLIC_SZ + PLIC_ENABLE_OFF + HARTID_IN_SOCKET(hartid)*2*PLIC_ENABLE_CONTEXTSZ + PLIC_ENABLE_CONTEXTSZ)

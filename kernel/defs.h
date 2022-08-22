@@ -92,7 +92,6 @@ pagetable_t     proc_pagetable(struct proc *);
 void            proc_freepagetable(pagetable_t, uint64);
 int             kill(int);
 struct cpu*     mycpu(void);
-struct cpu*     getmycpu(void);
 struct proc*    myproc();
 void            procinit(void);
 void            scheduler(void) __attribute__((noreturn));
@@ -106,6 +105,7 @@ int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
 void*           my_domain(void);
+void*           my_cpu(void);
 
 // swtch.S
 void            swtch(struct context*, struct context*);
@@ -149,6 +149,8 @@ void            trapinit(void);
 void            trapinithart(void);
 extern struct spinlock tickslock;
 void            usertrapret(void);
+void            timerinit(void);
+
 
 // uart.c
 void            uartinit(void);
@@ -160,6 +162,7 @@ int             uartgetc(void);
 // vm.c
 void            kvminit(void);
 void            kvminithart(void);
+pte_t*          walk(pagetable_t, uint64, int);
 void            kvmmap(pagetable_t, uint64, uint64, uint64, int);
 int             mappages(pagetable_t, uint64, uint64, uint64, int);
 pagetable_t     uvmcreate(void);
@@ -174,7 +177,7 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
-int             vmperm(ptr_t, ptr_t, uint16_t, int);
+int             vmperm(pagetable_t, ptr_t, ptr_t, uint16_t, int);
 
 
 // plic.c
@@ -207,22 +210,3 @@ void parse_reg(char*, char*, uint32_t, void*);
 void print_dtb(void);
 const uint32_t* print_dt_node(const void*, void*);
 unsigned char is_reserved(const void*, ptr_t);
-
-// topology.c
-struct machine;
-struct domain;
-void init_topology(uint32_t);
-void finalize_topology(void);
-void add_numa(void);
-void print_topology(void);
-void assign_freepages(void*);
-void* kalloc_node(struct domain* d);
-void free_machine(void);
-void print_struct_machine_loc(void);
-void* find_memrange(struct machine*, void*);
-
-// ipi.c
-void sbi_get_spec_version(void);
-void sbi_start_hart(const unsigned long, unsigned long, unsigned long);
-void sbi_stop_hart(void);
-void sbi_send_ipi(const unsigned long*);

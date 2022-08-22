@@ -34,19 +34,12 @@ OBJS = \
   $K/virtio_disk.o \
   $K/dtb.o \
   $K/topology.o \
-  $K/ipi.o \
+  $K/sbi.o \
 
-ifndef CPUS
-CPUS := 4
-endif
+CPUS     ?= 4
+NODES    ?= 2
+KERNBASE ?=0x80200000
 
-ifndef NODES
-NODES := 2
-endif
-
-ifndef KERNBASE
-	KERNBASE=0x80200000
-endif
 
 # riscv64-unknown-elf- or riscv64-linux-gnu-
 # perhaps in /opt/riscv/bin
@@ -68,6 +61,15 @@ endif
 
 QEMU = qemu-system-riscv64
 
+QEMU_VER_MAJOR := $(shell $(QEMU) --version | grep -Eo '[0-9]*' | head -1)
+QEMU_GT_6 := $(shell [ $(QEMU_VER_MAJOR) -gt 6 ] && echo true)
+ifeq ($(QEMU_GT_6),true)
+NB_CORE_PER_SOC = 512
+else
+NB_CORE_PER_SOC = 8
+endif
+
+
 CC = $(TOOLPREFIX)gcc
 AS = $(TOOLPREFIX)gas
 LD = $(TOOLPREFIX)ld
@@ -78,10 +80,12 @@ CFLAGS = -Wall -Werror -O0 -fno-omit-frame-pointer -ggdb
 CFLAGS += -MD
 CFLAGS += -mcmodel=medany
 CFLAGS += -ffreestanding -fno-common -nostdlib -mno-relax
+CFLAGS += -Wno-infinite-recursion
 CFLAGS += -I.
 CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
 CFLAGS += -DNB_SOCKETS=$(NODES) -DNB_HARTS=$(CPUS)
 CFLAGS += -DKERNBASE=$(KERNBASE)
+CFLAGS += -DMAX_NB_HARTS_PER_SOCKET=$(NB_CORE_PER_SOC)
 
 # Enable Portable Independent Executable
 ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]no-pie'),)

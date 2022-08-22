@@ -5,6 +5,7 @@
 #include "topology.h"
 #include "proc.h"
 #include "defs.h"
+#include "exec.h"
 
 struct cpu cpus[NCPU];    // No repplication
 
@@ -80,6 +81,20 @@ void* my_domain(){
     panic("The cpu running this code is not known by the kernel");
 
   return r;
+}
+
+
+// Must be called with interrupts disable because of cpuid()
+void* my_cpu(){
+  struct cpu_desc* cpu;
+  int cur_cpu = cpuid();
+
+  for(cpu=machine->all_cpus; cpu && cpu->lapic != cur_cpu; cpu=cpu->all_next); 
+
+  if(!cpu)
+    panic("The cpu running this code is not known by the kernel");
+
+  return cpu;
 }
 
 
@@ -525,20 +540,22 @@ yield(void)
 
 // A fork child's very first scheduling by scheduler()
 // will swtch to forkret.
+
 void
 forkret(void)
 {
-  static int first = 1;
+  // static int first = 1;
 
   // Still holding p->lock from scheduler.
   release(&myproc()->lock);
 
-  if (first) {
+  if(!cpuid()){
     // File system initialization must be run in the context of a
     // regular process (e.g., because it calls sleep), and thus cannot
     // be run from main().
-    first = 0;
+    // first = 0;
     fsinit(ROOTDEV);
+    start_all_domains();
   }
 
   usertrapret();

@@ -377,8 +377,13 @@ void print_property(char* prop_name, char* value, uint32_t size, void* param){
     printf(": %d cells", bigToLittleEndian32((uint32_t*)value));
   }
 
-  // Case phadle
+  // Case phandle
   else if(!memcmp(prop_name, FDT_PHANDLE, sizeof(FDT_PHANDLE))){
+    printf(": %d", bigToLittleEndian32((uint32_t*)value));
+  }
+
+  // Case interrupts
+  else if(!memcmp(prop_name, FDT_INTERRUPTS, sizeof(FDT_INTERRUPTS))){
     printf(": %d", bigToLittleEndian32((uint32_t*)value));
   }
 

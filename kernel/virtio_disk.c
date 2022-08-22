@@ -17,8 +17,10 @@
 #include "buf.h"
 #include "virtio.h"
 
+extern unsigned long virtio0;
+
 // the address of virtio mmio register r.
-#define R(r) ((volatile uint32 *)(VIRTIO0 + (r)))
+#define R(r) ((volatile uint32 *)(virtio0 + (r)))
 
 static struct disk {
   // the virtio driver and device mostly communicate through a set of

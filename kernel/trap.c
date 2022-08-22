@@ -5,11 +5,15 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "sbi.h"
 
 struct spinlock tickslock;
 uint ticks;
 
 extern char trampoline[], uservec[], userret[];
+extern uint32_t uart0_irq;
+extern uint32_t virtio0_irq;
+
 
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
@@ -27,6 +31,7 @@ void
 trapinithart(void)
 {
   w_stvec((uint64)kernelvec);
+  w_sstatus(r_sstatus() | SSTATUS_SIE);
 }
 
 //
@@ -147,6 +152,59 @@ kerneltrap()
   if((which_dev = devintr()) == 0){
     printf("scause %p\n", scause);
     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
+
+    // Print scause
+    if(scause & 0x8000000000000000L){
+      printf("Interruption cause: ");
+      if(scause == 0x8000000000000001L){
+        printf("Supervisor software interrupt\n");
+      }else if(scause == 0x8000000000000005L){
+        printf("Supervisor timer interrupt\n");
+      }else if(scause == 0x8000000000000009L){
+        printf("Supervisor external interrupt\n");
+      }else if(scause >= 0x8000000000000010L){
+        printf("Reserved for platform use\n");
+      }
+      else{
+        printf("Reserved\n");
+      }
+    }else{
+      printf("Exception cause: ");
+      if(scause == 0){
+        printf("Instruction address misaligned\n");
+      }else if(scause == 1){
+        printf("Instruction access fault\n");
+      }else if(scause == 2){
+        printf("Illegal instruction\n");
+      }else if(scause == 3){
+        printf("Breakpoint\n");
+      }else if(scause == 4){
+        printf("Load address misaligned\n");
+      }else if(scause == 5){
+        printf("Load access fault\n");
+      }else if(scause == 6){
+        printf("Store/AMO address misaligned\n");
+      }else if(scause == 7){
+        printf("Store AMO address fault\n");
+      }else if(scause == 8){
+        printf("Environment call from U-mode\n");
+      }else if(scause == 9){
+        printf("Environment call from S-mode\n");
+      }else if(scause == 12){
+        printf("Instruction page fault\n");
+      }else if(scause == 13){
+        printf("Load page fault\n");
+      }else if(scause == 15){
+        printf("Store/AMO page fault\n");
+      }else if((scause >= 24 && scause <= 31) || (scause >= 48 && scause <= 63)){
+        printf("Custom exception\n");
+      }else{
+        printf("Reserved\n");
+      }
+    }
+
+    printf(" (%d)", cpuid());
+
     panic("kerneltrap");
   }
 
@@ -169,6 +227,18 @@ clockintr()
   release(&tickslock);
 }
 
+
+// Schedule timer interrupt.
+// It is caught by devintr which schedules the next timer interrupt infinitely.
+void
+timerinit()
+{
+  uint64 now = r_time();
+  uint64 date = now + SCHED_INTERVAL;
+
+  sbi_set_timer(date);
+}
+
 // check if it's an external interrupt or software interrupt,
 // and handle it.
 // returns 2 if timer interrupt,
@@ -186,9 +256,9 @@ devintr()
     // irq indicates which device interrupted.
     int irq = plic_claim();
 
-    if(irq == UART0_IRQ){
+    if(irq == uart0_irq){
       uartintr();
-    } else if(irq == VIRTIO0_IRQ){
+    } else if(irq == virtio0_irq){
       virtio_disk_intr();
     } else if(irq){
       printf("unexpected interrupt irq=%d\n", irq);
@@ -200,18 +270,20 @@ devintr()
     if(irq)
       plic_complete(irq);
 
+    w_sip(r_sip() & ~SIP_SEIP);
+
     return 1;
   } else if(scause == 0x8000000000000001L){
-    // software interrupt from a machine-mode timer interrupt,
-    // forwarded by timervec in kernelvec.S.
-
+    // supervisor software interrupt
+    panic("supervisor software interrupt");
+  } else if(scause == 0x8000000000000005L){
     if(cpuid() == 0){
       clockintr();
     }
     
-    // acknowledge the software interrupt by clearing
-    // the SSIP bit in sip.
-    w_sip(r_sip() & ~2);
+    // acknowledge the interrupt by clearing the STIP bit in sip.
+    timerinit();
+    w_sip(r_sip() & ~SIP_STIP);
 
     return 2;
   } else {

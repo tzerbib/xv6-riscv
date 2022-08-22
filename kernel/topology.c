@@ -9,17 +9,11 @@
 
 extern struct kmem kmem;
 extern ptr_t ksize;
-extern char etext[];  // kernel.ld sets this to end of kernel code.
 extern char* p_entry;         // first physical address of kernel.
 extern pagetable_t kernel_pagetable;
-extern char numa_ready;
-extern pte_t* walk(pagetable_t, uint64, int);
 extern struct fdt_repr fdt;
 
-
 struct machine* machine;       // Beginning of whole machine structure
-struct machine* wip_machine;   // Machine structure while in construction
-struct machine* old_machine;   // Old Machine structure not yet freed
 
 struct {
   void* topology_end;          // Next empty place for machine substructures
@@ -30,11 +24,26 @@ struct {
 const void* reserved_node;
 uint32_t current_domain;
 
+unsigned long uart0;
+uint32_t uart0_irq;
+// virtio mmio interface
+unsigned long virtio0;
+uint32_t virtio0_irq;
 
 struct args_excl_reserved{
   ptr_t* addr;
   ptr_t* range;
   uint32_t* domain;
+};
+
+struct dtbkvmmake{
+  struct cells* c;
+  pagetable_t pgt;
+};
+
+struct args_mapdevrange{
+  unsigned long* p_devloc;
+  pagetable_t pgt;
 };
 
 
@@ -46,7 +55,7 @@ void ensure_space(uint64_t length){
   if(numa_allocator.remaining < length){
     numa_allocator.topology_end = kalloc();
 
-    if(wip_machine){
+    if(machine){
       // Make old page point to new page
       *((ptr_t*)PGROUNDDOWN((ptr_t)old_page)) = (ptr_t) numa_allocator.topology_end;
     }
@@ -62,28 +71,19 @@ void ensure_space(uint64_t length){
 void init_topology(uint32_t domain){
   current_domain = domain;
   machine = 0;
-  old_machine = 0;
 
-  wip_machine = 0;
   numa_allocator.topology_end = 0;
   numa_allocator.remaining = 0;
 
   ensure_space(sizeof(struct machine));
-  wip_machine = (struct machine*) numa_allocator.topology_end;
-  wip_machine->all_cpus = 0;
-  wip_machine->all_ranges = 0;
-  wip_machine->all_domains = 0;
+  machine = (struct machine*) numa_allocator.topology_end;
+  machine->all_cpus = 0;
+  machine->all_ranges = 0;
+  machine->all_domains = 0;
 
   // Point next empty space on newly allocated area
   numa_allocator.topology_end += sizeof(struct machine);
   numa_allocator.remaining -= sizeof(struct machine);
-}
-
-
-void finalize_topology(){
-  old_machine = machine;
-  machine = wip_machine;
-  numa_ready = 1;  // switch to kalloc_numa
 }
 
 
@@ -100,8 +100,8 @@ struct domain* add_domain(uint32_t id){
   new_domain->freepages.freelist = (void*)0;
 
   // Link this new structure to the others
-  new_domain->all_next = wip_machine->all_domains;
-  wip_machine->all_domains = new_domain;
+  new_domain->all_next = machine->all_domains;
+  machine->all_domains = new_domain;
 
   // Compute next empty place
   numa_allocator.topology_end += sizeof(struct domain);
@@ -138,14 +138,14 @@ void* add_cpu(uint32_t domain_id, uint32_t apic_id){
   
   // Fill the structure information
   new_cpu->lapic = apic_id;
-  struct domain* d = find_domain(wip_machine, domain_id, 1);
+  struct domain* d = find_domain(machine, domain_id, 1);
   new_cpu->domain = d;
   new_cpu->next = d->cpus;
   d->cpus = new_cpu;
 
   // Link this new structure to the others
-  new_cpu->all_next = wip_machine->all_cpus;
-  wip_machine->all_cpus = new_cpu;
+  new_cpu->all_next = machine->all_cpus;
+  machine->all_cpus = new_cpu;
 
   return new_cpu;
 }
@@ -177,14 +177,14 @@ void* add_memrange(uint32_t domain_id, void* start, uint64_t length, uint8_t res
   new_memrange->start = start;
   new_memrange->length = length;
   new_memrange->reserved = reserved;
-  struct domain* d = find_domain(wip_machine, domain_id, 1);
+  struct domain* d = find_domain(machine, domain_id, 1);
   new_memrange->domain = d;
   new_memrange->next = d->memranges;
   d->memranges = new_memrange;
 
   // Link this new structure to the others
-  new_memrange->all_next = wip_machine->all_ranges;
-  wip_machine->all_ranges = new_memrange;
+  new_memrange->all_next = machine->all_ranges;
+  machine->all_ranges = new_memrange;
   
   return new_memrange;
 }
@@ -196,7 +196,7 @@ void __freerange(ptr_t addr, ptr_t range, void* param){
   char *p = (char*)PGROUNDDOWN(addr);
   for(; p + PGSIZE <= (char*)addr+range; p += PGSIZE){
     // Avoid freeing the kernel and OpenSBI
-    if(((p >= p_entry && p < p_entry+ksize)) || is_reserved(reserved_node, (ptr_t)p))
+    if(((p >= (char*)PGROUNDDOWN((ptr_t)p_entry) && p < (char*)PGROUNDUP((ptr_t)(p_entry+ksize)))) || is_reserved(reserved_node, (ptr_t)p))
       continue;
 
     // Avoid DTB
@@ -207,7 +207,7 @@ void __freerange(ptr_t addr, ptr_t range, void* param){
     ++ctr;
     kfree(p);
   }
-  printf("%p -- %p, added %d pages\n", PGROUNDDOWN(addr), p, ctr);
+  // printf("%p -- %p, added %d pages\n", PGROUNDDOWN(addr), p, ctr);
 }
 
 
@@ -266,16 +266,97 @@ freerange_node(const void* node, void* param){
 void
 freerange(void)
 {
-  numa_ready = 0;
   struct cells cell = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
 
+  // Get reserved node (i.e. do not free OpenSBI)
   reserved_node = get_node(FDT_RESERVED_MEM, sizeof(FDT_RESERVED_MEM));
 
+  // Get domain of currently running cpu
   const void* node_cpus = get_node(FDT_CPUS_NODE, sizeof(FDT_CPUS_NODE));
   applySubnodes(node_cpus, get_current_domain, 0);
 
   freerange_node(fdt.fd_struct, &cell);
 }
+
+
+
+void mapdevrange(ptr_t addr, ptr_t range, void* param){
+  struct args_mapdevrange* args = param;
+
+  // Check if the address should be kept
+  if(args->p_devloc)
+    *((uint32_t*)args->p_devloc) = addr;
+
+  kvmmap(args->pgt, addr, addr, range, PTE_R | PTE_W);
+}
+
+
+void mapdev(const void* node, char* name, struct cells* cell, void* args_mpdvrg, uint32_t* irq){
+  struct args_parse_reg args_reg;
+  args_reg.c = cell;
+  args_reg.args = args_mpdvrg;
+  args_reg.f = mapdevrange;
+
+  if(!get_prop(node, FDT_INTERRUPTS, sizeof(FDT_INTERRUPTS), irq)){
+    printf("In node %s (%p), no interruption number for uart0\n", name, node);
+    panic("");
+  }
+  
+  applyProperties(node, parse_reg, &args_reg);
+}
+
+const uint32_t*
+__dtb_kvmmake(const void* node, void* param){
+  struct dtbkvmmake* args = param;
+
+  struct cells new_cells = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
+  get_prop(node, FDT_ADDRESS_CELLS, sizeof(FDT_ADDRESS_CELLS), &new_cells.address_cells);
+  get_prop(node, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS), &new_cells.size_cells);
+
+  char* c = (char*)((uint32_t*)node+1);
+
+  struct args_mapdevrange dest_args;
+  dest_args.pgt = args->pgt;
+
+  // Case node name starts with "uart@"
+  if(!memcmp(c, FDT_UART, sizeof(FDT_UART)-1)){
+    dest_args.p_devloc = &uart0;
+    mapdev(node, c, args->c, &dest_args, &uart0_irq);
+  }
+
+  // Case node name starts with "virtio_mmio@10001000"
+  if(!memcmp(c, FDT_VIRTIO_MMIO, sizeof(FDT_VIRTIO_MMIO)-1)){
+    dest_args.p_devloc = &virtio0;
+    mapdev(node, c, args->c, &dest_args, &virtio0_irq);
+  }
+
+  // Case node name starts with "plic@"
+  if(!memcmp(c, FDT_PLIC, sizeof(FDT_PLIC)-1)){
+    dest_args.p_devloc = 0;
+    struct args_parse_reg args_reg;
+    args_reg.c = args->c;
+    args_reg.args = &dest_args;
+    args_reg.f = mapdevrange;
+    applyProperties(node, parse_reg, &args_reg);
+  }
+
+  struct cells* tmp_cell = args->c;
+  args->c = &new_cells;
+  const uint32_t* next = applySubnodes(node, __dtb_kvmmake, args);
+  args->c = tmp_cell;
+  return next;
+}
+
+
+// Add the UART, VIRTIO and PLIC to the kernel pagetable
+void dtb_kvmmake(void* kpgtbl){
+  struct dtbkvmmake args;
+  struct cells cell = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
+  args.c = &cell;
+  args.pgt = kpgtbl;
+  __dtb_kvmmake(fdt.fd_struct, &args);
+}
+
 
 
 void __exclude_reserved(ptr_t addr, ptr_t range, void* param){
@@ -401,7 +482,7 @@ compute_topology(const void* node, void* param){
 }
 
 
-// Add a numa topology given by a SRAT table to the machine description
+// Add a numa topology given by the DTB to the machine description
 void add_numa(){
   struct cells cell = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
   compute_topology(fdt.fd_struct, &cell);
@@ -478,26 +559,6 @@ void assign_freepages(void* pa_dtb){
   struct memrange* memrange;
   struct domain* domain;
   unsigned int ctr = 0;
-  struct domain* curr_dom;
-  struct run *curr_pg, *tmp_pg;
-
-  // Get freepages from the old machine structure
-  if(old_machine){
-    // Browse all domains
-    for(curr_dom=old_machine->all_domains; curr_dom; curr_dom=curr_dom->all_next){
-      // Browse all freepages of a given domain
-      curr_pg=curr_dom->freepages.freelist;
-      while(curr_pg){
-        tmp_pg = curr_pg->next;
-        kfree(curr_pg);
-        curr_pg = tmp_pg;
-        ++ctr;
-      }
-    }
-    printf("From old numa topology, extracted %d pages\n", ctr);
-
-    return;
-  }
   
   // Get the first free page and clear the freelist
   acquire(&kmem.lock);
@@ -527,7 +588,7 @@ void assign_freepages(void* pa_dtb){
     ++ctr;
   }
 
-  printf("From xv6 freelist, extracted %d pages\n", ctr);
+  // printf("From xv6 freelist, extracted %d pages\n", ctr);
 }
 
 
@@ -547,7 +608,7 @@ struct domain* get_domain(int cpu){
 void forall_domain(void (*f)(void*, void*), void* args){
   struct domain* curr_dom;
 
-  // Browse all cpu of a given domain
+  // Browse all domains
   for(curr_dom=machine->all_domains; curr_dom; curr_dom=curr_dom->all_next){
     f(curr_dom, args);
   }
@@ -556,8 +617,27 @@ void forall_domain(void (*f)(void*, void*), void* args){
 void forall_cpu(void (*f)(void*, void*), void* args){
   struct cpu_desc* curr_cpu;
 
-  // Browse all cpu of a given domain
+  // Browse all cpus
   for(curr_cpu=machine->all_cpus; curr_cpu; curr_cpu=curr_cpu->all_next){
+    f(curr_cpu, args);
+  }
+}
+
+void forall_memrange(void (*f)(void*, void*), void* args){
+  struct memrange* curr_mr;
+
+  // Browse all cpus
+  for(curr_mr=machine->all_ranges; curr_mr; curr_mr=curr_mr->all_next){
+    f(curr_mr, args);
+  }
+}
+
+
+void forall_cpu_in_domain(struct domain* d, void (*f)(void*, void*), void* args){
+  struct cpu_desc* curr_cpu;
+
+  // Browse all cpus
+  for(curr_cpu=d->cpus; curr_cpu; curr_cpu=curr_cpu->next){
     f(curr_cpu, args);
   }
 }
@@ -611,7 +691,7 @@ void print_memrange(struct memrange* memrange){
   if(memrange->reserved)
     printf("(resv)");
   else
-   printf("      ");
+    printf("      ");
   printf(": %p -- %p\n", memrange->start, memrange->start + memrange->length);
 }
 
@@ -628,6 +708,8 @@ void print_topology(){
   if(!machine){
     return;
   }
+
+  printf("\n\n--- Machine topology: ---\n\n");
 
   // Browse all domains
   for(curr_dom=machine->all_domains; curr_dom; curr_dom=curr_dom->all_next){
@@ -670,7 +752,7 @@ void print_struct_machine_loc(){
 
 
 void free_machine(){
-  ptr_t* next = (ptr_t*) PGROUNDDOWN((ptr_t)old_machine);
+  ptr_t* next = (ptr_t*) PGROUNDDOWN((ptr_t)machine);
   ptr_t* tmp;
   unsigned int ctr = 0;
 
@@ -681,7 +763,7 @@ void free_machine(){
     ctr++;
   }
 
-  old_machine = 0;
+  machine = 0;
 
   printf("From old internal struct, freed       %d pages\n", ctr);
 }
