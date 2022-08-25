@@ -16,11 +16,12 @@
 #include "fs.h"
 #include "buf.h"
 #include "virtio.h"
+#include "topology.h"
 
-extern unsigned long virtio0;
+extern struct device* virtio0;
 
 // the address of virtio mmio register r.
-#define R(r) ((volatile uint32 *)(virtio0 + (r)))
+#define R(r) ((volatile uint32 *)(virtio0->start + (r)))
 
 static struct disk {
   // the virtio driver and device mostly communicate through a set of

@@ -23,6 +23,8 @@
 #define FDT_UART            "uart@"
 #define FDT_VIRTIO_MMIO     "virtio_mmio@10001000"
 #define FDT_PLIC            "plic@"
+#define FDT_CLINT           "clint@"
+
 
 struct fdt_header{
   uint32_t magic;

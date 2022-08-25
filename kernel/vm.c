@@ -26,9 +26,6 @@ kvmmake()
   kpgtbl = (pagetable_t) kalloc();
   memset(kpgtbl, 0, PGSIZE);
 
-  // uart registers, virtio mmio disk interface and plic
-  dtb_kvmmake(kpgtbl);
-
   // Kernal text, data and RAM are mapped during topology extraction (compute_ranges)
 
   // map the trampoline for trap entry/exit to

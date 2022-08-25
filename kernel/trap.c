@@ -6,13 +6,14 @@
 #include "proc.h"
 #include "defs.h"
 #include "sbi.h"
+#include "topology.h"
 
 struct spinlock tickslock;
 uint ticks;
 
 extern char trampoline[], uservec[], userret[];
-extern uint32_t uart0_irq;
-extern uint32_t virtio0_irq;
+extern struct device* uart0;
+extern struct device* virtio0;
 
 
 // in kernelvec.S, calls kerneltrap().
@@ -256,9 +257,9 @@ devintr()
     // irq indicates which device interrupted.
     int irq = plic_claim();
 
-    if(irq == uart0_irq){
+    if(irq == uart0->irq){
       uartintr();
-    } else if(irq == virtio0_irq){
+    } else if(irq == virtio0->irq){
       virtio_disk_intr();
     } else if(irq){
       printf("unexpected interrupt irq=%d\n", irq);

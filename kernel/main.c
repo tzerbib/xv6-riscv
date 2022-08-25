@@ -29,6 +29,12 @@ machine_master_main(unsigned long hartid, ptr_t dtb)
 
   kinit();           // physical page allocator
   kvminit();         // create kernel page table
+  init_topology(0);
+  add_numa();
+  numa_ready = 1;  // switch to kalloc_numa
+  assign_freepages((void*) dtb_pa);
+
+  dtb_kvmmake(kernel_pagetable); // Map uart registers, virtio mmio disk interface and plic
   consoleinit();
   printfinit();
   printf("\n");
@@ -37,10 +43,7 @@ machine_master_main(unsigned long hartid, ptr_t dtb)
   printf("hart %d as machine master\n", cpuid());
 
   print_dtb();
-  init_topology(0);
-  add_numa();
-  numa_ready = 1;  // switch to kalloc_numa
-  assign_freepages((void*) dtb_pa);
+
   print_topology();
   print_struct_machine_loc();
 
@@ -102,20 +105,22 @@ domain_master_main(ptr_t args)
   bargs.current_domain = tmp_bargs->current_domain;
 
   ksize = (ptr_t)end - (ptr_t)_entry;
+  dtb_pa = bargs.dtb_pa;
 
-  initialize_fdt((void*)bargs.dtb_pa);
+  initialize_fdt((void*)dtb_pa);
 
   kinit();           // physical page allocator
   kvminit();         // create kernel page table
+  init_topology(bargs.current_domain);
+  add_numa();
+  numa_ready = 1;  // switch to kalloc_numa
+  assign_freepages((void*)bargs.dtb_pa);
+  dtb_kvmmake(kernel_pagetable); // Map uart registers, virtio mmio disk interface and plic
   consoleinit();
   printfinit();
 
   printf("hart %d as domain master\n", cpuid());
 
-  init_topology(bargs.current_domain);
-  add_numa();
-  numa_ready = 1;  // switch to kalloc_numa
-  assign_freepages((void*)bargs.dtb_pa);
   print_topology();
   print_struct_machine_loc();
 

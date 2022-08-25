@@ -15,7 +15,7 @@
 extern ptr_t ksize;
 extern ptr_t p_entry;
 extern void _masters_boot(void);
-extern unsigned long uart0;
+extern struct device* uart0;
 
 extern void _slaves_boot(void);
 extern void _masters_wakeup(void);
@@ -306,8 +306,8 @@ void kexec(void* memrange, void* args){
   vmperm(kernel_pagetable, PGROUNDDOWN(bargs->entry), PGSIZE, PTE_X, 1);
   vmperm(pgt, PGROUNDDOWN(bargs->entry), PGSIZE, PTE_X, 1);
 
-  // TODEL: this device is just mapped for debug printing  
-  kvmmap(pgt, uart0, uart0, 0x100, PTE_R|PTE_W);
+  // TODEL: this device is just mapped for debug printing
+  kvmmap(pgt, (ptr_t)uart0->start, (ptr_t)uart0->start, uart0->length, PTE_R|PTE_W);
 
   // Wake up the domain master hart
   bargs->mksatppgt = MAKE_SATP(pgt);

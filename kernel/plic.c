@@ -3,10 +3,11 @@
 #include "memlayout.h"
 #include "riscv.h"
 #include "defs.h"
+#include "topology.h"
 
 
-extern uint32_t uart0_irq;
-extern uint32_t virtio0_irq;
+extern struct device* uart0;
+extern struct device* virtio0;
 
 
 //
@@ -19,8 +20,8 @@ plicinit(void)
   int i;
   // set desired IRQ priorities non-zero (otherwise disabled).
   for (i = 0; i < NB_SOCKETS; i++) {
-      *(uint32*)PLIC_PRIORITY(i, uart0_irq) = 1;
-      *(uint32*)PLIC_PRIORITY(i, virtio0_irq) = 1;
+      *(uint32*)PLIC_PRIORITY(i, uart0->irq) = 1;
+      *(uint32*)PLIC_PRIORITY(i, virtio0->irq) = 1;
   }
 }
 
@@ -30,7 +31,7 @@ plicinithart(void)
   int hart = cpuid();
 
   // set uart's enable bit for this hart's S-mode.
-  *(uint32*)PLIC_SENABLE(hart) = (1 << uart0_irq) | (1 << virtio0_irq);
+  *(uint32*)PLIC_SENABLE(hart) = (1 << uart0->irq) | (1 << virtio0->irq);
 
   // set this hart's S-mode priority threshold to 0.
   *(uint32*)PLIC_SPRIOTHRESH(hart) = 0;

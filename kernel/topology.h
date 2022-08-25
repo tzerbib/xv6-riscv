@@ -5,11 +5,13 @@
 #include "spinlock.h"
 #include "kalloc.h"
 
+#define DOM_DEV_DFT 0
 
 struct machine{
   struct cpu_desc* all_cpus;   // Linked list of all cpu in the machine
   struct memrange* all_ranges; // Linked list of memory ranges of the machine
   struct domain* all_domains;  // Linked list of all numa domains of the machine
+  struct device* all_devices;  // Linked list of all devices of the machine
 }__attribute__((packed));
 
 
@@ -37,6 +39,26 @@ struct domain{
   struct memrange* memranges;  // First memory range of this numa domain
   struct cpu_desc* cpus;       // First cpu of this numa domain 
   struct kmem freepages;       // First free page for this domain
+  struct device* devices;      // First device owned by this domain
+};
+
+
+
+enum devices_id{
+  ID_UART,
+  ID_DISK,
+  ID_PLIC,
+  ID_CLINT
+};
+
+struct device{
+  struct device* all_next;     // Next device in the list of all devices
+  struct device* next;         // Next device on the same domain
+  enum devices_id id;          // Device type
+  struct domain* owner;              // Domain in charge of this device
+  uint32_t irq;                // Interrupt request number for this device
+  void* start;                 // Virtual starting address of the device
+  ptr_t length;                // Length of the address space of the device
 };
 
 

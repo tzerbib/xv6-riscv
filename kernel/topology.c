@@ -15,7 +15,7 @@ extern struct fdt_repr fdt;
 
 struct machine* machine;       // Beginning of whole machine structure
 
-struct {
+struct{
   void* topology_end;          // Next empty place for machine substructures
   uint64_t remaining;          // Remaining size in the last topology page
 }numa_allocator;
@@ -24,11 +24,8 @@ struct {
 const void* reserved_node;
 uint32_t current_domain;
 
-unsigned long uart0;
-uint32_t uart0_irq;
-// virtio mmio interface
-unsigned long virtio0;
-uint32_t virtio0_irq;
+struct device* uart0;
+struct device* virtio0;
 
 struct args_excl_reserved{
   ptr_t* addr;
@@ -42,7 +39,8 @@ struct dtbkvmmake{
 };
 
 struct args_mapdevrange{
-  unsigned long* p_devloc;
+  void* start;
+  ptr_t* length;
   pagetable_t pgt;
 };
 
@@ -80,6 +78,7 @@ void init_topology(uint32_t domain){
   machine->all_cpus = 0;
   machine->all_ranges = 0;
   machine->all_domains = 0;
+  machine->all_devices = 0;
 
   // Point next empty space on newly allocated area
   numa_allocator.topology_end += sizeof(struct machine);
@@ -96,6 +95,7 @@ struct domain* add_domain(uint32_t id){
   new_domain->domain_id = id;
   new_domain->memranges = 0;
   new_domain->cpus = 0;
+  new_domain->devices = 0;
   initlock(&new_domain->freepages.lock, "numa_freepage");
   new_domain->freepages.freelist = (void*)0;
 
@@ -152,6 +152,9 @@ void* add_cpu(uint32_t domain_id, uint32_t apic_id){
 
 
 void* find_memrange(struct machine* m, void* addr){
+  if(!m)
+    panic("in find_memrange: machine is NULL");
+
   struct memrange* curr = m->all_ranges;
 
   for(; curr; curr=curr->all_next){
@@ -187,6 +190,33 @@ void* add_memrange(uint32_t domain_id, void* start, uint64_t length, uint8_t res
   machine->all_ranges = new_memrange;
   
   return new_memrange;
+}
+
+
+void* add_device(uint32_t id, uint32_t owner, uint32_t irq, void* start, uint64_t length){
+  // Ensure that all the structure will fit in one page
+  ensure_space(sizeof(struct device));
+  struct device* new_dev = (struct device*) numa_allocator.topology_end;
+
+  // Compute next empty place
+  numa_allocator.topology_end += sizeof(struct device);
+  numa_allocator.remaining -= sizeof(struct device);
+  
+  // Fill the structure information
+  new_dev->id = id;
+  new_dev->irq = irq;
+  new_dev->start = start;
+  new_dev->length = length;
+  struct domain* d = find_domain(machine, owner, 0);
+  new_dev->owner = d;
+  new_dev->next = d->devices;
+  d->devices = new_dev;
+
+  // Link this new structure to the others
+  new_dev->all_next = machine->all_devices;
+  machine->all_devices = new_dev;
+
+  return new_dev;
 }
 
 
@@ -283,9 +313,9 @@ freerange(void)
 void mapdevrange(ptr_t addr, ptr_t range, void* param){
   struct args_mapdevrange* args = param;
 
-  // Check if the address should be kept
-  if(args->p_devloc)
-    *((uint32_t*)args->p_devloc) = addr;
+  // Store the address and length of device address space
+  *((ptr_t*)args->start) = addr;
+  *((ptr_t*)args->length) = range;
 
   kvmmap(args->pgt, addr, addr, range, PTE_R | PTE_W);
 }
@@ -297,13 +327,27 @@ void mapdev(const void* node, char* name, struct cells* cell, void* args_mpdvrg,
   args_reg.args = args_mpdvrg;
   args_reg.f = mapdevrange;
 
-  if(!get_prop(node, FDT_INTERRUPTS, sizeof(FDT_INTERRUPTS), irq)){
-    printf("In node %s (%p), no interruption number for uart0\n", name, node);
-    panic("");
-  }
+  get_prop(node, FDT_INTERRUPTS, sizeof(FDT_INTERRUPTS), irq);
   
   applyProperties(node, parse_reg, &args_reg);
 }
+
+
+uint32_t get_dev_owner(const void* node, void* start){
+  uint32_t owner = DOM_DEV_DFT;
+  struct domain* d;
+  struct memrange* mr;
+
+  // Check if a domain is specified in the DTB
+  // Otherwise try by checking the starting address of the device
+  if(!get_prop(node, FDT_NUMA_DOMAIN, sizeof(FDT_NUMA_DOMAIN), &owner))
+    if((mr = find_memrange(machine, start)))
+       if((d = mr->domain))
+        owner = d->domain_id;
+
+  return owner;
+}
+
 
 const uint32_t*
 __dtb_kvmmake(const void* node, void* param){
@@ -317,27 +361,39 @@ __dtb_kvmmake(const void* node, void* param){
 
   struct args_mapdevrange dest_args;
   dest_args.pgt = args->pgt;
+  uint32_t irq = 0;
+  uint32_t owner;
+  void* start = 0;
+  ptr_t length = 0;
+  dest_args.start = &start;
+  dest_args.length = &length;
 
   // Case node name starts with "uart@"
   if(!memcmp(c, FDT_UART, sizeof(FDT_UART)-1)){
-    dest_args.p_devloc = &uart0;
-    mapdev(node, c, args->c, &dest_args, &uart0_irq);
+    mapdev(node, c, args->c, &dest_args, &irq);
+    owner = get_dev_owner(node, start);
+    uart0 = add_device(ID_UART, owner, irq, start, length);
   }
 
   // Case node name starts with "virtio_mmio@10001000"
   if(!memcmp(c, FDT_VIRTIO_MMIO, sizeof(FDT_VIRTIO_MMIO)-1)){
-    dest_args.p_devloc = &virtio0;
-    mapdev(node, c, args->c, &dest_args, &virtio0_irq);
+    mapdev(node, c, args->c, &dest_args, &irq);
+    owner = get_dev_owner(node, start);
+    virtio0 = add_device(ID_DISK, owner, irq, start, length);
   }
 
   // Case node name starts with "plic@"
   if(!memcmp(c, FDT_PLIC, sizeof(FDT_PLIC)-1)){
-    dest_args.p_devloc = 0;
-    struct args_parse_reg args_reg;
-    args_reg.c = args->c;
-    args_reg.args = &dest_args;
-    args_reg.f = mapdevrange;
-    applyProperties(node, parse_reg, &args_reg);
+    mapdev(node, c, args->c, &dest_args, &irq);
+    owner = get_dev_owner(node, start);
+    add_device(ID_PLIC, owner, irq, start, length);
+  }
+
+  // Case node name starts with "clint@"
+  if(!memcmp(c, FDT_CLINT, sizeof(FDT_CLINT)-1)){
+    mapdev(node, c, args->c, &dest_args, &irq);
+    owner = get_dev_owner(node, start);
+    add_device(ID_CLINT, owner, irq, start, length);
   }
 
   struct cells* tmp_cell = args->c;
@@ -696,6 +752,24 @@ void print_memrange(struct memrange* memrange){
 }
 
 
+void print_device(struct device* dev){
+  switch((int)dev->id){
+  case ID_UART:
+    printf("\n(%p) UART0 (%d):", dev, dev->irq);
+    break;
+  case ID_DISK:
+    printf("\n(%p) DISK   (%d):", dev, dev->irq);
+    break;
+  case ID_PLIC:
+    printf("\n(%p) PLIC      :", dev);
+    break;
+  case ID_CLINT:
+    printf("\n(%p) CLINT     :", dev);
+    break;
+  }
+  printf(" %p -- %p", dev->start, dev->start+dev->length);
+}
+
 
 // Print the topology of the entire machine
 void print_topology(){
@@ -703,6 +777,7 @@ void print_topology(){
   struct cpu_desc* curr_cpu;
   struct memrange* curr_memrange;
   struct run* curr_pg;
+  struct device* curr_dev;
   uint ctr;
 
   if(!machine){
@@ -730,7 +805,15 @@ void print_topology(){
     printf("(%p) There are %d free pages associated with this domain\n",
            curr_dom->freepages.freelist, ctr);
 
-    printf("\n");
+    // Browse all devices of a given domain
+    printf("(%p) Devices: ", 0x0);
+    for(ctr=0,curr_dev=curr_dom->devices; curr_dev; curr_dev=curr_dev->next,++ctr){
+      print_device(curr_dev);
+    }
+    if(!ctr)
+      printf("None\n");
+
+    printf("\n\n");
   }
 }
 
