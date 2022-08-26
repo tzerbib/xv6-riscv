@@ -10,11 +10,9 @@ struct boot_arg{
   ptr_t current_domain;
   ptr_t mksatppgt;
   ptr_t entry;
+  uint32_t ready;
 };
 
-pagetable_t kload(void*, char*, struct memrange*);
-void kexec(void*, void*);
-void start_domain(void*, void*);
 void start_all_domains(void);
 void wakeup_masters(void*, void*);
 void wakeup_slaves(void*, void*);

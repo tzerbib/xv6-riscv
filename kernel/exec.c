@@ -295,7 +295,7 @@ void kexec(void* memrange, void* args){
   pagetable_t pgt = args;
 
   // Information is stored right after the kernel
-  struct boot_arg* bargs = (struct boot_arg*)((char*)mr->start+mr->length) - 1;
+  struct boot_arg* bargs = (struct boot_arg*)PGROUNDDOWN((ptr_t)((char*)mr->start+mr->length-1));
   bargs->dtb_pa = dtb_pa;
   bargs->current_domain = mr->domain->domain_id;
 
@@ -326,7 +326,7 @@ wakeup_masters(void* domain, void* args)
 
 
 void
-start_domain(void* domain, void* kimg)
+prepare_domain(void* domain, void* kimg)
 {
   struct domain* d = domain;
   // Avoid caller's domain 
@@ -338,10 +338,21 @@ start_domain(void* domain, void* kimg)
   kexec(mr, pgt);
 }
 
+
+void
+start_domain(void* domain, void* arg)
+{
+  struct memrange* mr = ((struct domain*)domain)->memranges;
+  struct boot_arg* args = (struct boot_arg*)PGROUNDDOWN((ptr_t)((char*)mr->start+mr->length-1));
+  args->ready = 1;
+}
+
+
 void start_all_domains(void)
 {
-  // Load a kernel image in the memory of all domains
-  forall_domain(start_domain, kimg[kimg_id++]);
+  // Load kernel images in the memory of all domains then start them all
+  forall_domain(prepare_domain, kimg[kimg_id++]);
+  forall_domain(start_domain, 0);
   
   uint64_t i = 1<<29;
   for(; i; --i);

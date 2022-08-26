@@ -204,7 +204,7 @@ kerneltrap()
       }
     }
 
-    printf(" (%d)", cpuid());
+    printf("hartid: %d\n", cpuid());
 
     panic("kerneltrap");
   }

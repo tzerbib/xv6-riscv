@@ -74,6 +74,7 @@ machine_master_main(unsigned long hartid, ptr_t dtb)
   __sync_synchronize();
 
   // Wake up all other domain masters by sending IPIs
+  // Mandatory to be sure that IRQ from disk will be held by some hart
   forall_domain(wakeup_masters, 0);
 
   scheduler();
@@ -81,17 +82,32 @@ machine_master_main(unsigned long hartid, ptr_t dtb)
 
 
 // _entry jumps here in supervisor mode on all domain master CPUs.
+// In this function, domain master do the bare minimum to be able
+// to catch interruptions (so that the machine master can load kernel images
+// from disk).
+// Once all kernel images have been load by kexec (in domain 0),
+// jump to _masters_boot (entry.S)
 void domain_master_wakeup(unsigned long hartid)
 {
   kvminithart();    // turn on paging
   trapinithart();   // install kernel trap vector
-  plicinithart();   // ask PLIC for device interrupts
 
   struct memrange* mr = ((struct domain*)my_domain())->memranges;
-  struct boot_arg* args = (struct boot_arg*)((char*)mr->start + mr->length) - 1;
-  args->entry = args->mksatppgt = 0;
+  struct boot_arg* tmp_args = (struct boot_arg*)PGROUNDDOWN((ptr_t)((char*)mr->start+mr->length-1));
+  tmp_args->ready = 0;
+  
+  plicinithart();   // ask PLIC for device interrupts
 
-  while(!args->entry || !args->mksatppgt);
+  // Synchronization barrier
+  while(!(tmp_args->ready));
+
+  struct boot_arg* args = (struct boot_arg*)((char*)mr->start + mr->length) - 1;
+
+  args->dtb_pa = tmp_args->dtb_pa;
+  args->current_domain = tmp_args->current_domain;
+  args->entry = tmp_args->entry;
+  args->mksatppgt = tmp_args->mksatppgt;
+
   ((void(*)(unsigned long, ptr_t, ptr_t))args->entry)(hartid, args->mksatppgt, (ptr_t)args);
 }
 
