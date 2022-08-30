@@ -294,7 +294,7 @@ void kexec(void* memrange, void* args){
   struct memrange* mr = memrange;
   pagetable_t pgt = args;
 
-  // Information is stored right after the kernel
+  // Information is stored at the start of the last page of the kernels memrange
   struct boot_arg* bargs = (struct boot_arg*)PGROUNDDOWN((ptr_t)((char*)mr->start+mr->length-1));
   bargs->dtb_pa = dtb_pa;
   bargs->current_domain = mr->domain->domain_id;
@@ -320,7 +320,9 @@ wakeup_masters(void* domain, void* args)
 {
   struct domain* d = domain;
   if(my_domain() == d) return;
-  ptr_t* sp = (ptr_t*)((char*)d->memranges->start + d->memranges->length);
+  
+  // Temporary stack located at the end of the kernel memory range
+  ptr_t* sp = (ptr_t*)((char*)d->kernelmr->start + d->kernelmr->length);
   sbi_start_hart(d->cpus->lapic, (ptr_t)_masters_wakeup, (ptr_t)sp);
 }
 
@@ -332,7 +334,7 @@ prepare_domain(void* domain, void* kimg)
   // Avoid caller's domain 
   if(d == my_domain()) return;
   pagetable_t pgt;
-  struct memrange* mr = d->memranges;
+  struct memrange* mr = d->kernelmr;
   pgt = kload(domain, kimg, mr);
 
   kexec(mr, pgt);
@@ -342,7 +344,10 @@ prepare_domain(void* domain, void* kimg)
 void
 start_domain(void* domain, void* arg)
 {
-  struct memrange* mr = ((struct domain*)domain)->memranges;
+  struct domain* d = domain;
+  // Avoid caller's domain 
+  if(d == my_domain()) return;
+  struct memrange* mr = d->kernelmr;
   struct boot_arg* args = (struct boot_arg*)PGROUNDDOWN((ptr_t)((char*)mr->start+mr->length-1));
   args->ready = 1;
 }
@@ -354,7 +359,8 @@ void start_all_domains(void)
   forall_domain(prepare_domain, kimg[kimg_id++]);
   forall_domain(start_domain, 0);
   
-  uint64_t i = 1<<29;
+  // TODO: prevent interrupts from forkret in DOM1 (resolved with comm).
+  uint64_t i = 1<<28;
   for(; i; --i);
   printf("salut\n");
 }

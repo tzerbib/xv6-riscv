@@ -92,7 +92,7 @@ void domain_master_wakeup(unsigned long hartid)
   kvminithart();    // turn on paging
   trapinithart();   // install kernel trap vector
 
-  struct memrange* mr = ((struct domain*)my_domain())->memranges;
+  struct memrange* mr = ((struct domain*)my_domain())->kernelmr;
   struct boot_arg* tmp_args = (struct boot_arg*)PGROUNDDOWN((ptr_t)((char*)mr->start+mr->length-1));
   tmp_args->ready = 0;
   

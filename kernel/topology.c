@@ -538,10 +538,29 @@ compute_topology(const void* node, void* param){
 }
 
 
+// The kernel is placed in the memory range with the lowest addresses.
+void set_kernel_mr(void* dom, void* args){
+  (void) args;
+  struct domain* d = dom;
+  d->kernelmr = d->memranges;
+  struct memrange* curr_mr;
+  
+  for(curr_mr=d->memranges;curr_mr;curr_mr=curr_mr->next){
+    // TODO: Check if curr_mr has enough memory to place the kernel + 1 page
+    // for the temporary stack.
+    // To do so, this function should be called from kexec
+    if(!curr_mr->reserved && curr_mr->start < d->kernelmr->start){
+      d->kernelmr = curr_mr;
+    }
+  }
+}
+
+
 // Add a numa topology given by the DTB to the machine description
 void add_numa(){
   struct cells cell = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
   compute_topology(fdt.fd_struct, &cell);
+  forall_domain(set_kernel_mr, 0);
 }
 
 

@@ -40,6 +40,7 @@ struct domain{
   struct cpu_desc* cpus;       // First cpu of this numa domain 
   struct kmem freepages;       // First free page for this domain
   struct device* devices;      // First device owned by this domain
+  struct memrange* kernelmr;   // Memory range containing the kernel text+data
 };
 
 
