@@ -10,6 +10,7 @@ struct boot_arg{
   ptr_t current_domain;
   ptr_t mksatppgt;
   ptr_t entry;
+  ptr_t pgt;
   uint32_t ready;
 };
 

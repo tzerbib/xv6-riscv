@@ -4,7 +4,7 @@
 #include "defs.h"
 #include "acpi.h"
 #include "dtb.h"
-#include <stdint.h>
+#include "virtio.h"
 
 
 extern struct kmem kmem;
@@ -36,12 +36,14 @@ struct args_excl_reserved{
 struct dtbkvmmake{
   struct cells* c;
   pagetable_t pgt;
+  pagetable_t curpgt;
 };
 
 struct args_mapdevrange{
   void* start;
   ptr_t* length;
   pagetable_t pgt;
+  pagetable_t curpgt;
 };
 
 
@@ -315,16 +317,17 @@ void mapdevrange(ptr_t addr, ptr_t range, void* param){
 
   // Store the address and length of device address space
   *((ptr_t*)args->start) = addr;
-  *((ptr_t*)args->length) = range;
+  *(args->length) = range;
 
-  kvmmap(args->pgt, addr, addr, range, PTE_R | PTE_W);
+  if(args->curpgt)
+    kvmmap(args->curpgt, addr, addr, range, PTE_R | PTE_W);
 }
 
 
-void mapdev(const void* node, char* name, struct cells* cell, void* args_mpdvrg, uint32_t* irq){
+void mapdev(const void* node, struct cells* cell, void* args, uint32_t* irq){
   struct args_parse_reg args_reg;
   args_reg.c = cell;
-  args_reg.args = args_mpdvrg;
+  args_reg.args = args;
   args_reg.f = mapdevrange;
 
   get_prop(node, FDT_INTERRUPTS, sizeof(FDT_INTERRUPTS), irq);
@@ -335,17 +338,46 @@ void mapdev(const void* node, char* name, struct cells* cell, void* args_mpdvrg,
 
 uint32_t get_dev_owner(const void* node, void* start){
   uint32_t owner = DOM_DEV_DFT;
-  struct domain* d;
-  struct memrange* mr;
 
   // Check if a domain is specified in the DTB
-  // Otherwise try by checking the starting address of the device
-  if(!get_prop(node, FDT_NUMA_DOMAIN, sizeof(FDT_NUMA_DOMAIN), &owner))
-    if((mr = find_memrange(machine, start)))
-       if((d = mr->domain))
-        owner = d->domain_id;
+  get_prop(node, FDT_NUMA_DOMAIN, sizeof(FDT_NUMA_DOMAIN), &owner);
 
   return owner;
+}
+
+
+void
+get_virtio_mmio_dev(const void* node, struct cells* cell, struct args_mapdevrange* args)
+{
+  uint32_t irq = 0;
+  uint32_t owner;
+  
+  mapdev(node, cell, args, &irq);
+
+  // Check Magic number, version and vendor ID (initialized by QEMU)
+  if(*(uint32_t*)((*(ptr_t*)args->start)+VIRTIO_MMIO_MAGIC_VALUE) != 0x74726976 ||
+     *(uint32_t*)((*(ptr_t*)args->start)+VIRTIO_MMIO_VERSION) != 1 ||
+     *(uint32_t*)((*(ptr_t*)args->start)+VIRTIO_MMIO_VENDOR_ID) != 0x554d4551){
+    panic("virtio device misinitialized by QEMU");
+  }
+
+  // QEMU sets Device ID to 0 if no backend is present 
+  if(*(uint32_t*)((*(ptr_t*)args->start)+VIRTIO_MMIO_DEVICE_ID) == 0) return;
+
+  owner = get_dev_owner(node, args->start);
+  
+  // Add device to topology structure
+  uint32_t dev = *(uint32_t*)((*(ptr_t*)args->start)+VIRTIO_MMIO_DEVICE_ID);
+  switch(dev){
+    case 2:
+      virtio0 = add_device(ID_DISK, owner, irq, (void*)(*((ptr_t*)args->start)), *args->length);
+      break;
+    default:
+      printf("In get_virtio_mmio_dev: Unknown Device type %d in dev %p\n", dev, args->start);
+      panic("");
+  }
+
+  kvmmap(args->pgt, *(ptr_t*)args->start, *(ptr_t*)args->start, *args->length, PTE_R | PTE_W);
 }
 
 
@@ -361,38 +393,46 @@ __dtb_kvmmake(const void* node, void* param){
 
   struct args_mapdevrange dest_args;
   dest_args.pgt = args->pgt;
+  dest_args.curpgt = args->curpgt;
   uint32_t irq = 0;
   uint32_t owner;
   void* start = 0;
   ptr_t length = 0;
   dest_args.start = &start;
   dest_args.length = &length;
+  struct domain* d = my_domain();
 
   // Case node name starts with "uart@"
   if(!memcmp(c, FDT_UART, sizeof(FDT_UART)-1)){
-    mapdev(node, c, args->c, &dest_args, &irq);
+    mapdev(node, args->c, &dest_args, &irq);
     owner = get_dev_owner(node, start);
+    kvmmap(dest_args.pgt, (ptr_t)start, (ptr_t)start, length, PTE_R | PTE_W);
+      
     uart0 = add_device(ID_UART, owner, irq, start, length);
   }
 
-  // Case node name starts with "virtio_mmio@10001000"
+  // Case node name starts with "virtio_mmio@"
   if(!memcmp(c, FDT_VIRTIO_MMIO, sizeof(FDT_VIRTIO_MMIO)-1)){
-    mapdev(node, c, args->c, &dest_args, &irq);
-    owner = get_dev_owner(node, start);
-    virtio0 = add_device(ID_DISK, owner, irq, start, length);
+    get_virtio_mmio_dev(node, args->c, &dest_args);
   }
 
   // Case node name starts with "plic@"
   if(!memcmp(c, FDT_PLIC, sizeof(FDT_PLIC)-1)){
-    mapdev(node, c, args->c, &dest_args, &irq);
+    mapdev(node, args->c, &dest_args, &irq);
     owner = get_dev_owner(node, start);
+    // if(owner == d->domain_id || cpuid() == 0)
+      kvmmap(dest_args.pgt, (ptr_t)start, (ptr_t)start, length, PTE_R | PTE_W);
+
     add_device(ID_PLIC, owner, irq, start, length);
   }
 
   // Case node name starts with "clint@"
   if(!memcmp(c, FDT_CLINT, sizeof(FDT_CLINT)-1)){
-    mapdev(node, c, args->c, &dest_args, &irq);
+    mapdev(node, args->c, &dest_args, &irq);
     owner = get_dev_owner(node, start);
+    if(owner == d->domain_id)
+      kvmmap(dest_args.pgt, (ptr_t)start, (ptr_t)start, length, PTE_R | PTE_W);
+
     add_device(ID_CLINT, owner, irq, start, length);
   }
 
@@ -405,11 +445,12 @@ __dtb_kvmmake(const void* node, void* param){
 
 
 // Add the UART, VIRTIO and PLIC to the kernel pagetable
-void dtb_kvmmake(void* kpgtbl){
+void dtb_kvmmake(void* kpgtbl, void* curpgt){
   struct dtbkvmmake args;
   struct cells cell = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
   args.c = &cell;
   args.pgt = kpgtbl;
+  args.curpgt = curpgt;
   __dtb_kvmmake(fdt.fd_struct, &args);
 }
 
@@ -707,6 +748,14 @@ void forall_memrange(void (*f)(void*, void*), void* args){
   }
 }
 
+void forall_device(void (*f)(void*, void*), void* args){
+  struct device* curr_dev;
+
+  // Browse all cpus
+  for(curr_dev=machine->all_devices; curr_dev; curr_dev=curr_dev->all_next){
+    f(curr_dev, args);
+  }
+}
 
 void forall_cpu_in_domain(struct domain* d, void (*f)(void*, void*), void* args){
   struct cpu_desc* curr_cpu;
@@ -740,6 +789,13 @@ int get_nb_cpu(void){
   return n;
 }
 
+int get_nb_device(void){
+  int n = 0;
+
+  forall_device(count, &n);
+
+  return n;
+}
 
 int get_nb_cpu_in_domain(struct domain* d){
   int n = 0;

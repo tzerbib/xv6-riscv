@@ -76,11 +76,13 @@ struct domain* get_domain(int);
 void forall_domain(void (*)(void*, void*), void*);
 void forall_cpu(void (*)(void*, void*), void*);
 void forall_memrange(void (*)(void*, void*), void*);
+void forall_device(void (*)(void*, void*), void*);
 void forall_cpu_in_domain(struct domain*, void (*)(void*, void*), void*);
 int get_nb_domain(void);
 int get_nb_cpu(void);
+int get_nb_device(void);
 int get_nb_cpu_in_domain(struct domain*);
-void dtb_kvmmake(void*);
+void dtb_kvmmake(void*, void*);
 
 
 #endif // __TOPOLOGY__

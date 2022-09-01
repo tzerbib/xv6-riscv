@@ -15,14 +15,21 @@ extern struct device* virtio0;
 //
 
 void
+__plicinit(void* device, void* args)
+{
+  struct device* dev = device;
+
+  // Ignore other devices than PLIC
+  if(dev->id != ID_PLIC) return;
+  *(uint32*)(dev->start + PLIC_PRIORITY_OFF + uart0->irq*PLIC_PRIORITY_SZ) = 1;
+  *(uint32*)(dev->start + PLIC_PRIORITY_OFF + virtio0->irq*PLIC_PRIORITY_SZ) = 1;
+}
+
+void
 plicinit(void)
 {
-  int i;
   // set desired IRQ priorities non-zero (otherwise disabled).
-  for (i = 0; i < NB_SOCKETS; i++) {
-      *(uint32*)PLIC_PRIORITY(i, uart0->irq) = 1;
-      *(uint32*)PLIC_PRIORITY(i, virtio0->irq) = 1;
-  }
+  forall_device(__plicinit, 0);
 }
 
 void

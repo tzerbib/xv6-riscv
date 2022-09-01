@@ -34,7 +34,7 @@ machine_master_main(unsigned long hartid, ptr_t dtb)
   numa_ready = 1;  // switch to kalloc_numa
   assign_freepages((void*) dtb_pa);
 
-  dtb_kvmmake(kernel_pagetable); // Map uart registers, virtio mmio disk interface and plic
+  dtb_kvmmake(kernel_pagetable, 0); // Map uart registers, virtio mmio disk interface and plic
   consoleinit();
   printfinit();
   printf("\n");
@@ -107,6 +107,7 @@ void domain_master_wakeup(unsigned long hartid)
   args->current_domain = tmp_args->current_domain;
   args->entry = tmp_args->entry;
   args->mksatppgt = tmp_args->mksatppgt;
+  args->pgt = tmp_args->pgt;
 
   ((void(*)(unsigned long, ptr_t, ptr_t))args->entry)(hartid, args->mksatppgt, (ptr_t)args);
 }
@@ -119,6 +120,7 @@ domain_master_main(ptr_t args)
   struct boot_arg bargs;
   bargs.dtb_pa = tmp_bargs->dtb_pa;
   bargs.current_domain = tmp_bargs->current_domain;
+  bargs.pgt = tmp_bargs->pgt;
 
   ksize = (ptr_t)end - (ptr_t)_entry;
   dtb_pa = bargs.dtb_pa;
@@ -131,7 +133,7 @@ domain_master_main(ptr_t args)
   add_numa();
   numa_ready = 1;  // switch to kalloc_numa
   assign_freepages((void*)bargs.dtb_pa);
-  dtb_kvmmake(kernel_pagetable); // Map uart registers, virtio mmio disk interface and plic
+  dtb_kvmmake(kernel_pagetable, (void*)bargs.pgt); // Map uart registers, virtio mmio disk interface and plic
   consoleinit();
   printfinit();
 

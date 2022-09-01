@@ -21,7 +21,7 @@
 #define FDT_RESERVED_MEM    "reserved-memory"
 #define FDT_INTERRUPTS      "interrupts"
 #define FDT_UART            "uart@"
-#define FDT_VIRTIO_MMIO     "virtio_mmio@10001000"
+#define FDT_VIRTIO_MMIO     "virtio_mmio@"
 #define FDT_PLIC            "plic@"
 #define FDT_CLINT           "clint@"
 

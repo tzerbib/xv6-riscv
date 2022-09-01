@@ -161,12 +161,10 @@ map121(void* memrange, void* param)
 
   ptr_t start = (ptr_t)mr->start;
   ptr_t size = mr->length;
-  int perm = PTE_R;
+  int perm = PTE_R|PTE_W;
   pte_t* pte;
 
   // // Permissions
-  if(mr->domain == args->mr->domain)
-    perm |= PTE_W;
   if(mr->reserved)
     perm |= PTE_X;
 
@@ -298,6 +296,7 @@ void kexec(void* memrange, void* args){
   struct boot_arg* bargs = (struct boot_arg*)PGROUNDDOWN((ptr_t)((char*)mr->start+mr->length-1));
   bargs->dtb_pa = dtb_pa;
   bargs->current_domain = mr->domain->domain_id;
+  bargs->pgt = (ptr_t)pgt;
 
   // TODO: read the _entry symbol from ELF
   bargs->entry = (ptr_t)_masters_boot + (ptr_t)mr->start - p_entry;
@@ -307,7 +306,7 @@ void kexec(void* memrange, void* args){
   vmperm(pgt, PGROUNDDOWN(bargs->entry), PGSIZE, PTE_X, 1);
 
   // TODEL: this device is just mapped for debug printing
-  kvmmap(pgt, (ptr_t)uart0->start, (ptr_t)uart0->start, uart0->length, PTE_R|PTE_W);
+  // kvmmap(pgt, (ptr_t)uart0->start, (ptr_t)uart0->start, uart0->length, PTE_R|PTE_W);
 
   // Wake up the domain master hart
   bargs->mksatppgt = MAKE_SATP(pgt);
