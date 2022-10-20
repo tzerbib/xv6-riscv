@@ -341,6 +341,8 @@ exit(int status)
 {
   struct proc *p = myproc();
 
+  printf("process %d exiting\n", p->pid);
+
   if(p == initproc)
     panic("init exiting");
 
@@ -447,6 +449,8 @@ scheduler(void)
 
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
+      /*if (p->pid == 3)*/
+          /*printf("PID 3 is %s\n", p->state == RUNNABLE ? "runnable" : "not runnable");*/
       if(p->state == RUNNABLE) {
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it

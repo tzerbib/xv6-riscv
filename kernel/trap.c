@@ -6,6 +6,7 @@
 #include "proc.h"
 #include "defs.h"
 #include "sbi.h"
+#include "syscall.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -67,6 +68,9 @@ usertrap(void)
     intr_on();
 
     syscall();
+    // Virtualization: special case where a user trap returns in VS mode
+    if (p->trapframe->a7 == SYS_von)
+        vtrapret();
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
@@ -148,12 +152,15 @@ kerneltrap()
   if((which_dev = devintr()) == 0){
     printf("scause %p\n", scause);
     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
+    printf("htval=%p htinst=%p\n", r_htval(), r_htinst());
     panic("kerneltrap");
   }
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING)
+  if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING) {
+    printf("took a kernel trap for a timer interrupt\n");
     yield();
+  }
 
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.

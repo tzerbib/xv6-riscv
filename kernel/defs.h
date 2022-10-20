@@ -147,6 +147,9 @@ void            timerinit(void);
 extern struct spinlock tickslock;
 void            usertrapret(void);
 
+// v.c
+void            vtrapret(void);
+
 // uart.c
 void            uartinit(void);
 void            uartintr(void);

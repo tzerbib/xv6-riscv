@@ -208,6 +208,74 @@ sfence_vma()
   asm volatile("sfence.vma zero, zero");
 }
 
+#define HSTATUS_SPV (1L << 7)  // Previous virtualization mode, 1=Virtual, 0=Normal
+#define HSTATUS_SPVP (1L << 8)  // Previous mode, 1=Supervisor, 0=User
+
+static inline uint64
+r_hstatus()
+{
+  uint64 x;
+  asm volatile("csrr %0, hstatus" : "=r" (x) );
+  return x;
+}
+
+#define HGATP_SV39 SATP_SV39
+
+#define MAKE_HGATP(pagetable) (HGATP_SV39 | (((uint64)pagetable) >> 12))
+
+static inline void
+w_hstatus(uint64 x)
+{
+  asm volatile("csrw hstatus, %0" : : "r" (x));
+}
+
+static inline uint64
+r_htval()
+{
+  uint64 x;
+  asm volatile("csrr %0, htval" : "=r" (x) );
+  return x;
+}
+
+static inline uint64
+r_htinst()
+{
+  uint64 x;
+  asm volatile("csrr %0, htinst" : "=r" (x) );
+  return x;
+}
+
+static inline uint64
+r_hedeleg()
+{
+  uint64 x;
+  asm volatile("csrr %0, hedeleg" : "=r" (x) );
+  return x;
+}
+
+static inline uint64
+r_hideleg()
+{
+  uint64 x;
+  asm volatile("csrr %0, hideleg" : "=r" (x) );
+  return x;
+}
+
+static inline uint64
+r_hgeip()
+{
+  uint64 x;
+  asm volatile("csrr %0, hgeip" : "=r" (x) );
+  return x;
+}
+
+static inline uint64
+r_hgeie()
+{
+  uint64 x;
+  asm volatile("csrr %0, hgeie" : "=r" (x) );
+  return x;
+}
 
 #define PGSIZE 4096 // bytes per page
 #define PGSHIFT 12  // bits of offset within a page
