@@ -12,6 +12,8 @@
 
 
 void freerange(void);
+void* forall_mr_in_domain(void*, void*, void*);
+void freerange_from_topo(void);
 extern void* kalloc_numa(void);
 extern void kfree_numa(void*);
 char numa_ready = 0;
@@ -26,7 +28,10 @@ void
 kinit(void)
 {
   initlock(&kmem.lock, "kmem");
-  freerange();
+  if(IS_MMASTER)
+    freerange();
+  else
+    forall_mr_in_domain(my_domain(), freerange_from_topo, 0);
 }
 
 

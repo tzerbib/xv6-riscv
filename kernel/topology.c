@@ -1,10 +1,12 @@
 #include "topology.h"
+#include "communication.h"
 #include "memlayout.h"
 #include "riscv.h"
 #include "defs.h"
 #include "acpi.h"
 #include "dtb.h"
 #include "virtio.h"
+#include <stdint.h>
 
 
 extern struct kmem kmem;
@@ -12,6 +14,7 @@ extern ptr_t ksize;
 extern char* p_entry;         // first physical address of kernel.
 extern pagetable_t kernel_pagetable;
 extern struct fdt_repr fdt;
+void compute_ranges(ptr_t, ptr_t, void*);
 
 struct machine* machine;       // Beginning of whole machine structure
 
@@ -31,6 +34,17 @@ struct args_excl_reserved{
   ptr_t* addr;
   ptr_t* range;
   uint32_t* domain;
+  int perm;
+};
+
+struct args_separate_mr{
+  ptr_t* addr_p1;
+  ptr_t* range_p1;
+  ptr_t* addr_p2;
+  ptr_t* range_p2;
+  ptr_t* addr_p3;
+  ptr_t* range_p3;
+  int perm;
 };
 
 struct dtbkvmmake{
@@ -98,6 +112,8 @@ struct domain* add_domain(uint32_t id){
   new_domain->memranges = 0;
   new_domain->cpus = 0;
   new_domain->devices = 0;
+  new_domain->kernelmr = 0;
+  new_domain->combuf = 0;
   initlock(&new_domain->freepages.lock, "numa_freepage");
   new_domain->freepages.freelist = (void*)0;
 
@@ -222,13 +238,61 @@ void* add_device(uint32_t id, uint32_t owner, uint32_t irq, void* start, uint64_
 }
 
 
+void __is_reserved(ptr_t addr, ptr_t range, void* param){
+  struct args_reserved* args = param;
+
+  if((ptr_t)args->addr >= addr && (ptr_t)args->addr < addr+range){
+    *args->reserved = 1;
+    return;
+  }
+}
+
+
+unsigned char is_reserved(const void* reserved_node, ptr_t addr){
+  if(!reserved_node)
+    return 0;
+
+  struct cells c = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
+  get_prop(reserved_node, FDT_ADDRESS_CELLS, sizeof(FDT_ADDRESS_CELLS), &c.address_cells);
+  get_prop(reserved_node, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS), &c.size_cells);
+
+  struct args_reserved args;
+  struct args_parse_reg args_reg;
+  unsigned char is_res = 0;
+  args.reserved = &is_res;
+  args.addr = (void*)addr;
+  args_reg.c = &c;
+  args_reg.args = &args;
+  args_reg.f = __is_reserved;
+  
+  applySubnodes(reserved_node, get_all_res, &args_reg);
+
+  return *args.reserved;
+}
+
+
 void __freerange(ptr_t addr, ptr_t range, void* param){
   unsigned int ctr = 0;
 
   char *p = (char*)PGROUNDDOWN(addr);
+  char* kend = (char*)PGROUNDUP((ptr_t)(p_entry+ksize));
+  char* combufend = (char*)PGROUNDUP((ptr_t)kend+COMM_BUF_SZ);
+
   for(; p + PGSIZE <= (char*)addr+range; p += PGSIZE){
     // Avoid freeing the kernel and OpenSBI
-    if(((p >= (char*)PGROUNDDOWN((ptr_t)p_entry) && p < (char*)PGROUNDUP((ptr_t)(p_entry+ksize)))) || is_reserved(reserved_node, (ptr_t)p))
+    if(((p >= (char*)PGROUNDDOWN((ptr_t)p_entry) && p < kend)) || is_reserved(reserved_node, (ptr_t)p))
+      continue;
+
+    // Assertions:
+    //  - The memory range in which is located the machine master kernel
+    //    is large enough for the kernel text + communication buffer
+    //  - The DTB does not stand in the area next to the machine master kernel
+    if(((char*)fdt.dtb_start >= kend && (char*)fdt.dtb_start < combufend)
+    || ((char*)fdt.dtb_end >= kend && (char*)fdt.dtb_end < combufend))
+      panic("DTB next to kernel 0");
+
+    // Avoid communication buffer
+    if(p >= kend && p < combufend)
       continue;
 
     // Avoid DTB
@@ -241,7 +305,6 @@ void __freerange(ptr_t addr, ptr_t range, void* param){
   }
   // printf("%p -- %p, added %d pages\n", PGROUNDDOWN(addr), p, ctr);
 }
-
 
 
 const uint32_t*
@@ -310,6 +373,29 @@ freerange(void)
   freerange_node(fdt.fd_struct, &cell);
 }
 
+
+void freerange_from_topo(void* memrange, void* args)
+{
+  unsigned int ctr = 0;
+  struct memrange* mr = memrange;
+
+  char *p = (char*)PGROUNDDOWN((ptr_t)mr->start);
+  char* kend = (char*)PGROUNDUP((ptr_t)(p_entry+ksize));
+
+  if(mr->reserved)
+    return;
+
+  for(; p + PGSIZE <= (char*)mr->start+mr->length; p += PGSIZE){
+    // Avoid freeing the kernel and OpenSBI
+    if((p >= (char*)PGROUNDDOWN((ptr_t)p_entry) && p < kend))
+      continue;
+
+    ++ctr;
+    kfree(p);
+  }
+
+  // printf("%p -- %p, added %d pages\n", PGROUNDDOWN(addr), p, ctr);
+}
 
 
 void mapdevrange(ptr_t addr, ptr_t range, void* param){
@@ -455,42 +541,51 @@ void dtb_kvmmake(void* kpgtbl, void* curpgt){
 }
 
 
-
-void __exclude_reserved(ptr_t addr, ptr_t range, void* param){
-  struct args_excl_reserved* args = param;
-  void compute_ranges(ptr_t, ptr_t, void*);
-  ptr_t r_addr = 0;
-  ptr_t r_range = 0;
+// Separate the set define in args.{addr,range}_p1 into up to 3 sets
+// depending on potential collision with the set [addr; addr+range]
+// args->{addr,range}_p2 will hold the intersection between both given sets
+void separate_memrange(ptr_t addr, ptr_t range, void* param){
+  struct args_separate_mr* args = param;
 
   // Case reserved memory in between the border of the tested memory range
-  if(*args->addr < addr && *args->addr+*args->range > addr+range){
+  if(*args->addr_p1 < addr && *args->addr_p1+*args->range_p1 > addr+range){
     // Treat end of memory range separately
-    compute_ranges(addr+range, *args->addr+*args->range-(addr+range), args->domain);
-    *args->range = addr+range - *args->addr;
+    *args->addr_p3 = addr+range;
+    *args->range_p3 = *args->addr_p1+*args->range_p1-(addr+range);
+    *args->range_p1 = addr+range - *args->addr_p1;
   }
 
   // Case start of the memrange in a reserved area
-  if(*args->addr >= addr && *args->addr < addr+range){
-    r_addr = *args->addr;
-    r_range = (addr+range < *args->addr+*args->range)? addr+range - r_addr : *args->addr+range;
-    *args->range = ((addr+range) - r_addr < *args->range)? *args->range - ((addr+range) - r_addr) : 0;
-    *args->addr = addr+range;
+  if(*args->addr_p1 >= addr && *args->addr_p1 < addr+range){
+    *args->addr_p2 = *args->addr_p1;
+    *args->range_p2 = (addr+range < *args->addr_p1+*args->range_p1)? addr+range - *args->addr_p2 : *args->addr_p1+range;
+    *args->range_p1 = ((addr+range) - *args->addr_p2 < *args->range_p1)? *args->range_p1 - ((addr+range) - *args->addr_p2) : 0;
+    *args->addr_p1 = addr+range;
   }
 
   // Case end of the memrange in a reserved area
-  else if(*args->addr+*args->range > addr && *args->addr+*args->range <= addr+range){
-    r_addr = addr;
-    r_range = *args->addr + *args->range - addr;
-    *args->range = addr - *args->addr;
-  }
-
-  // Allocate the reserved memory range
-  if(r_range){
-    add_memrange(*args->domain, (void*)r_addr, r_range, 1);
-    kvmmap(kernel_pagetable, r_addr, r_addr, r_range, PTE_R | PTE_X);
+  else if(*args->addr_p1+*args->range_p1 > addr && *args->addr_p1+*args->range_p1 <= addr+range){
+    *args->addr_p2 = addr;
+    *args->range_p2 = *args->addr_p1 + *args->range_p1 - addr;
+    *args->range_p1 = addr - *args->addr_p1;
   }
 }
 
+
+void separate_map_memrange(ptr_t start, ptr_t range, uint32_t domain, void* param){
+  struct args_separate_mr* args = param;
+
+  separate_memrange(start, range, param);
+
+  // look for reserved ranges in the 3rd part if reserved was in between
+  if(*args->addr_p3)
+    compute_ranges(*args->addr_p3, *args->range_p3, &domain);
+  // Add and map the reserved memory range
+  if(*args->range_p2){
+    add_memrange(domain, (void*)*args->addr_p2, *args->range_p2, 1);
+    kvmmap(kernel_pagetable, *args->addr_p2, *args->addr_p2, *args->range_p2, args->perm);
+  }
+}
 
 void exclude_reserved(ptr_t* addr, ptr_t* range, uint32_t domain){
   if(!reserved_node)
@@ -500,16 +595,30 @@ void exclude_reserved(ptr_t* addr, ptr_t* range, uint32_t domain){
   get_prop(reserved_node, FDT_ADDRESS_CELLS, sizeof(FDT_ADDRESS_CELLS), &c.address_cells);
   get_prop(reserved_node, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS), &c.size_cells);
 
-  struct args_excl_reserved args;
+  struct args_separate_mr args;
   struct args_parse_reg args_reg;
-  args.addr = addr;
-  args.range = range;
-  args.domain = &domain;
+  ptr_t addr2, r2, addr3, r3;
+  addr2 = r2 = addr3 = r3 = 0;
+  args.addr_p1 = addr;
+  args.range_p1 = range;
+  args.addr_p2 = &addr2;
+  args.range_p2 = &r2;
+  args.addr_p3 = &addr3;
+  args.range_p3 = &r3;
   args_reg.c = &c;
   args_reg.args = &args;
-  args_reg.f = __exclude_reserved;
+  args_reg.f = separate_memrange;
   
   applySubnodes(reserved_node, get_all_res, &args_reg);
+
+  // look for reserved ranges in the 3rd part if reserved was in between
+  if(r3)
+    compute_ranges(addr3, r3, &domain);
+  // Add and map the reserved memory range
+  if(r2){
+    add_memrange(domain, (void*)addr2, r2, 1);
+    kvmmap(kernel_pagetable, addr2, addr2, r2, PTE_R | PTE_X);
+  }
 }
 
 
@@ -520,11 +629,46 @@ void compute_ranges(ptr_t addr, ptr_t range, void* param){
   exclude_reserved(&addr, &range, *domain);
 
   // Avoid DTB pages
-  struct args_excl_reserved args;
-  args.addr = &addr;
-  args.range = &range;
-  args.domain = domain;
-  __exclude_reserved(PGROUNDDOWN((ptr_t)fdt.dtb_start), PGROUNDUP((ptr_t)fdt.dtb_end)-PGROUNDDOWN((ptr_t)fdt.dtb_start), &args);
+  if(((ptr_t)fdt.dtb_start >= addr && (ptr_t)fdt.dtb_start < addr+range)
+  || ((ptr_t)fdt.dtb_end >= addr && (ptr_t)fdt.dtb_end < addr+range)
+  ){
+    struct args_separate_mr args;
+    ptr_t addr2, r2, addr3, r3;
+    addr2 = r2 = addr3 = r3 = 0;
+    args.addr_p1 = &addr;
+    args.range_p1 = &range;
+    args.addr_p2 = &addr2;
+    args.range_p2 = &r2;
+    args.addr_p3 = &addr3;
+    args.range_p3 = &r3;
+    args.perm = PTE_R | PTE_X;
+    separate_map_memrange(PGROUNDDOWN((ptr_t)fdt.dtb_start), PGROUNDUP((ptr_t)fdt.dtb_end)-PGROUNDDOWN((ptr_t)fdt.dtb_start), *domain, &args);
+  }
+
+  // Avoid kernel + communication buffers (placed right after the kernel)
+  if((ptr_t)p_entry >= addr  && (ptr_t)p_entry < addr+range){
+    struct args_separate_mr args;
+    ptr_t addr2, r2, addr3, r3;
+    addr2 = r2 = addr3 = r3 = 0;
+    args.addr_p1 = &addr;
+    args.range_p1 = &range;
+    args.addr_p2 = &addr2;
+    args.range_p2 = &r2;
+    args.addr_p3 = &addr3;
+    args.range_p3 = &r3;
+    args.perm = PTE_R | PTE_W | PTE_X;
+
+    // Communication buffer
+    separate_map_memrange(PGROUNDUP((ptr_t)p_entry+ksize), PGROUNDUP(COMM_BUF_SZ), *domain, &args);
+    memset(p_entry+ksize, 0, COMM_BUF_SZ);
+    // struct memrange* mr = find_memrange(machine, (void*)PGROUNDUP((ptr_t)p_entry+ksize));
+    // mr->reserved = 0;
+
+    addr2 = addr3 = r2 = r3 = 0;
+
+    // kernel text
+    separate_map_memrange(PGROUNDDOWN((ptr_t)p_entry), PGROUNDUP(ksize), *domain, &args);
+  }
 
   add_memrange(*domain, (void*)addr, range, 0);
   kvmmap(kernel_pagetable, addr, addr, range, PTE_R | PTE_W);
@@ -583,25 +727,139 @@ compute_topology(const void* node, void* param){
 void set_kernel_mr(void* dom, void* args){
   (void) args;
   struct domain* d = dom;
-  d->kernelmr = d->memranges;
-  struct memrange* curr_mr;
-  
-  for(curr_mr=d->memranges;curr_mr;curr_mr=curr_mr->next){
-    // TODO: Check if curr_mr has enough memory to place the kernel + 1 page
-    // for the temporary stack.
-    // To do so, this function should be called from kexec
-    if(!curr_mr->reserved && curr_mr->start < d->kernelmr->start){
-      d->kernelmr = curr_mr;
+  d->kernelmr = 0;
+  struct memrange *curr_mr, *best;
+
+  if(d == my_domain())
+    d->kernelmr = find_memrange(machine, set_kernel_mr);
+  else{
+    for(curr_mr=d->memranges;curr_mr;curr_mr=curr_mr->next){
+      // TODO: Check if curr_mr has enough memory to place the kernel + 1 page
+      // for the temporary stack.
+      if(!curr_mr->reserved && curr_mr->length > PGROUNDUP(ksize) && (!d->kernelmr || curr_mr->start < d->kernelmr->start)){
+        d->kernelmr = curr_mr;
+        best = curr_mr;
+      }
     }
+    // Separate the choosen memrange in two
+    ptr_t addr1, addr2, addr3, r1, r2, r3;
+    addr1 = (ptr_t)best->start;
+    r1 = best->length;
+    addr2 = addr3 = r2 = r3 = 0;
+    struct args_separate_mr param = {&addr1, &r1, &addr2, &r2, &addr3, &r3};
+    separate_memrange((ptr_t)best->start, PGROUNDUP(ksize), &param);
+    
+    best->length = r2;
+    // Create a memrange with the remaining size
+    add_memrange(d->domain_id, (void*)addr1, r1, 0);
+  }
+}
+
+
+void set_combuf_mr(void* dom, void* args){
+  (void) args;
+  struct domain* d = dom;
+  struct memrange *curr_mr;
+  
+  if(d->combuf)
+    return;
+  
+  struct domain* my_dom = my_domain();
+
+  // The communication buffer of kernel 0 is placed right after the kernel text.
+  if(d == my_dom){
+    for(curr_mr=d->memranges;curr_mr;curr_mr=curr_mr->next){
+      if(curr_mr->start == d->kernelmr->start+d->kernelmr->length){
+        d->combuf = curr_mr->start;
+        curr_mr->reserved = 1;
+        break;
+      }
+    }
+
+    if(!d->combuf)
+      panic("in set_combuf_mr: kernel memory range successor not found");
+  }
+  else{
+    struct memrange *best = 0;
+    // Get memrange with highest addresses with sz > 2MB
+    for(curr_mr=d->memranges;curr_mr;curr_mr=curr_mr->next){
+      if(!curr_mr->reserved && curr_mr->length >= PGROUNDUP(COMM_BUF_SZ)){
+        if(!best || (best && best->start < curr_mr->start))
+          best = curr_mr;
+      }
+    }
+    if(best){
+      // Separate candidate into 2 memranges (one reserved for the combuf)
+      ptr_t addr1, addr2, addr3, r1, r2, r3;
+      r1 = best->length;
+      addr1 = (ptr_t)best->start;
+      addr2 = addr3 = r2 = r3 = 0;
+      struct args_separate_mr param = {&addr1, &r1, &addr2, &r2, &addr3, &r3};
+      separate_memrange((ptr_t)best->start+best->length-PGROUNDUP(COMM_BUF_SZ), PGROUNDUP(COMM_BUF_SZ), &param);
+      
+      d->combuf = (void*)addr2;
+      best->length = r1;
+      // Create the communication ring memory range
+      add_memrange(d->domain_id, (void*)addr2, r2, 1);
+    }
+    else
+      panic("in set_combuf_mr: missing memrange large enough for the combuf");
+  }
+}
+
+
+void __correct_memrange(void* memrange, void* args){
+  struct memrange* mr = memrange;
+  struct machine* given_m = args;
+
+  struct memrange* given_mr = find_memrange(given_m, mr->start);
+  mr->reserved = given_mr->reserved;
+}
+
+
+void correct_topo(void* dom, void* args){
+  struct machine* given_m = args;
+  struct domain *given_d, *d = dom;
+
+  // Look for corresponding domain on given topology
+  for(given_d=given_m->all_domains; given_d; given_d=given_d->all_next){
+    if(given_d->domain_id != d->domain_id)
+      continue;
+    
+    d->kernelmr = given_d->kernelmr;
+    d->combuf = given_d->combuf;
+    forall_memrange(__correct_memrange, given_m);
   }
 }
 
 
 // Add a numa topology given by the DTB to the machine description
-void add_numa(){
+void add_numa(ptr_t* given_topo){
   struct cells cell = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
   compute_topology(fdt.fd_struct, &cell);
-  forall_domain(set_kernel_mr, 0);
+
+  // Set kernel memory range + all comunication buffer location
+  if(IS_MMASTER){
+    forall_domain(set_kernel_mr, 0);
+    forall_domain(set_combuf_mr, 0);
+  }
+  else
+    forall_domain(correct_topo, given_topo);
+
+  // Set hart 0 as domain master
+  struct cpu_desc *curr, *h0;
+  struct domain* d = machine->all_domains;
+  while(d->domain_id != 0)
+    d = d->all_next;
+  h0 = curr = d->cpus;
+  if(h0->lapic){
+    while(curr->next->lapic != 0)
+      curr = curr->next;
+    h0 = curr->next;
+  }
+  curr->next = h0->next;
+  h0->next = d->cpus;
+  d->cpus = h0;
 }
 
 
@@ -766,6 +1024,15 @@ void forall_cpu_in_domain(struct domain* d, void (*f)(void*, void*), void* args)
   }
 }
 
+void forall_mr_in_domain(struct domain* d, void (*f)(void*, void*), void* args){
+  struct memrange* curr;
+
+  // Browse all cpus
+  for(curr=d->memranges; curr; curr=curr->next){
+    f(curr, args);
+  }
+}
+
 
 static inline void count(void* v, void* args){
   int* n = args;
@@ -819,10 +1086,14 @@ void print_cpu(struct cpu_desc* cpu){
 
 void print_memrange(struct memrange* memrange){
   printf("(%p) Memory range ", memrange);
-  if(memrange->reserved)
-    printf("(resv)");
+  if(memrange->domain->combuf == memrange->start)
+    printf("(combuf)");
+  else if(memrange == memrange->domain->kernelmr)
+    printf("(kernel)");
+  else if(memrange->reserved)
+    printf(" (resv) ");
   else
-    printf("      ");
+    printf("        ");
   printf(": %p -- %p\n", memrange->start, memrange->start + memrange->length);
 }
 
@@ -874,6 +1145,7 @@ void print_topology(){
     for(curr_memrange=curr_dom->memranges; curr_memrange; curr_memrange=curr_memrange->next){
       print_memrange(curr_memrange);
     }
+
 
     // Browse all freepages of a given domain
     for(ctr=0, curr_pg=curr_dom->freepages.freelist; curr_pg; ++ctr, curr_pg=curr_pg->next);

@@ -209,4 +209,3 @@ char get_prop(const void*, char*, uint, uint32_t*);
 void parse_reg(char*, char*, uint32_t, void*);
 void print_dtb(void);
 const uint32_t* print_dt_node(const void*, void*);
-unsigned char is_reserved(const void*, ptr_t);

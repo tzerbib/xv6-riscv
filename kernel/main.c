@@ -1,3 +1,4 @@
+#include "communication.h"
 #include "types.h"
 #include "param.h"
 #include "riscv.h"
@@ -6,6 +7,7 @@
 #include "exec.h"
 #include "sbi.h"
 #include "memlayout.h"
+#include "proc.h"
 
 
 char* p_entry;                     // first physical address of kernel.
@@ -16,7 +18,67 @@ extern struct machine* machine;    // Beginning of whole machine structure
 extern pagetable_t kernel_pagetable;
 extern char numa_ready;
 ptr_t dtb_pa;
+extern struct proc* allocproc(void);
+extern struct proc *initproc;
 
+
+void
+kernel_proc()
+{
+  struct proc* p = myproc();
+  release(&p->lock);
+
+  initcomm();         // communication buffer
+  binit();            // buffer cache
+  iinit();            // inode table
+  fileinit();         // file table
+  virtio_disk_init(); // emulated hard disk
+
+  if(IS_MMASTER){
+    __sync_synchronize();
+
+    // Wake up all other domain masters by sending IPIs (on this kernel image)
+    // Mandatory to be sure that IRQ from disk will be held by some hart
+    forall_domain(wakeup_masters, 0);
+
+    // File system initialization must be run in the context of a
+    // regular process (e.g., because it calls sleep)
+    fsinit(ROOTDEV);
+
+    // Load kernel images into memory and start all domain masters on them
+    start_all_domains();
+
+    // Machine master
+    userinit();       // first user process
+  }
+  else{
+    // Domain masters
+    consoleinit();
+    printfinit();
+
+    printf("hart %d as domain master\n", cpuid());
+
+    print_topology();
+    print_struct_machine_loc();
+
+    __sync_synchronize();
+
+    // Wake up all slaves by sending IPIs
+    forall_cpu_in_domain(my_domain(), wakeup_slaves, (void*)kernel_pagetable);
+  }
+
+  // Wait for the creation of initproc by one of the kernel
+
+  // Release the process
+  acquire(&p->lock);
+  p->xstate = 0;
+  p->state = ZOMBIE;
+  p->parent = initproc;
+
+  // Exit kernel proc
+  sched();
+  panic("kernel proc exit");
+}
 
 // _entry jumps here in supervisor mode on CPU 0.
 void
@@ -30,8 +92,8 @@ machine_master_main(unsigned long hartid, ptr_t dtb)
   kinit();           // physical page allocator
   kvminit();         // create kernel page table
   init_topology(0);
-  add_numa();
-  numa_ready = 1;  // switch to kalloc_numa
+  add_numa(0);
+  numa_ready = 1;    // switch to kalloc_numa
   assign_freepages((void*) dtb_pa);
 
   dtb_kvmmake(kernel_pagetable, 0); // Map uart registers, virtio mmio disk interface and plic
@@ -65,17 +127,14 @@ machine_master_main(unsigned long hartid, ptr_t dtb)
   trapinithart();  // install kernel trap vector
   plicinit();      // set up interrupt controller
   plicinithart();  // ask PLIC for device interrupts
-  binit();         // buffer cache
-  iinit();         // inode table
-  fileinit();      // file table
-  virtio_disk_init(); // emulated hard disk
-  userinit();      // first user process
 
-  __sync_synchronize();
-
-  // Wake up all other domain masters by sending IPIs
-  // Mandatory to be sure that IRQ from disk will be held by some hart
-  forall_domain(wakeup_masters, 0);
+  // Create a main proc in the proctable (enables context switches)
+  struct proc *p;
+  p = allocproc();
+  p->context.ra = (ptr_t)kernel_proc;
+  safestrcpy(p->name, "kernel_proc", sizeof(p->name));
+  p->state = RUNNABLE;
+  release(&p->lock);
 
   scheduler();
 }
@@ -100,6 +159,7 @@ void domain_master_wakeup(unsigned long hartid)
 
   // Synchronization barrier
   while(!(tmp_args->ready));
+  __sync_synchronize();
 
   struct boot_arg* args = (struct boot_arg*)((char*)mr->start + mr->length) - 1;
 
@@ -108,9 +168,11 @@ void domain_master_wakeup(unsigned long hartid)
   args->entry = tmp_args->entry;
   args->mksatppgt = tmp_args->mksatppgt;
   args->pgt = tmp_args->pgt;
+  args->topology = tmp_args->topology;
 
   ((void(*)(unsigned long, ptr_t, ptr_t))args->entry)(hartid, args->mksatppgt, (ptr_t)args);
 }
+
 
 
 void
@@ -121,6 +183,7 @@ domain_master_main(ptr_t args)
   bargs.dtb_pa = tmp_bargs->dtb_pa;
   bargs.current_domain = tmp_bargs->current_domain;
   bargs.pgt = tmp_bargs->pgt;
+  machine = (struct machine*)tmp_bargs->topology;
 
   ksize = (ptr_t)end - (ptr_t)_entry;
   dtb_pa = bargs.dtb_pa;
@@ -130,18 +193,11 @@ domain_master_main(ptr_t args)
   kinit();           // physical page allocator
   kvminit();         // create kernel page table
   init_topology(bargs.current_domain);
-  add_numa();
+  add_numa((ptr_t*)machine);
   numa_ready = 1;  // switch to kalloc_numa
   assign_freepages((void*)bargs.dtb_pa);
   dtb_kvmmake(kernel_pagetable, (void*)bargs.pgt); // Map uart registers, virtio mmio disk interface and plic
-  consoleinit();
-  printfinit();
-
-  printf("hart %d as domain master\n", cpuid());
-
-  print_topology();
-  print_struct_machine_loc();
-
+  
   // Add execute permission to the kernel text
   if(vmperm(kernel_pagetable, (pte_t)_entry, ksize, PTE_X, 1)){
     printf("kernel text for domain %d is not mapped\n", bargs.current_domain);
@@ -152,20 +208,22 @@ domain_master_main(ptr_t args)
   uvmunmap(kernel_pagetable, (ptr_t)_entry, 1+ksize/PGSIZE, 0);
   kvmmap(kernel_pagetable, (ptr_t)_entry, (ptr_t)p_entry, ksize, PTE_R|PTE_W|PTE_X);
 
-  kvminithart();    // turn on paging
-  timerinit();     // ask for clock interrupts
-  trapinit();      // trap vectors
-  trapinithart();   // install kernel trap vector
-  plicinit();      // set up interrupt controller
-  plicinithart();   // ask PLIC for device interrupts
-  binit();         // buffer cache
-  iinit();         // inode table
-  fileinit();      // file table
-  virtio_disk_init(); // emulated hard disk
+  kvminithart();      // turn on paging
+  timerinit();        // ask for clock interrupts
+  procinit();         // process table
+  trapinit();         // trap vectors
+  trapinithart();     // install kernel trap vector
+  plicinit();         // set up interrupt controller
+  plicinithart();     // ask PLIC for device interrupts
 
-  // Wake up all slaves by sending IPIs
-  forall_cpu_in_domain(my_domain(), wakeup_slaves, (void*)kernel_pagetable);
-  
+  // Create a main proc in the proctable (enables context switches)
+  struct proc *p;
+  p = allocproc();
+  p->context.ra = (ptr_t)kernel_proc;
+  safestrcpy(p->name, "kernel_proc", sizeof(p->name));
+  p->state = RUNNABLE;
+  release(&p->lock);
+
   scheduler();
 }
 

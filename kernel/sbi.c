@@ -72,8 +72,6 @@ void sbi_send_ipi(const unsigned long *hart_mask){
   if(ret.error != SBI_SUCCESS){
     panic("sbi_send_ipi");
   }
-
-  printf("IPI sent!\n");
 }
 
 

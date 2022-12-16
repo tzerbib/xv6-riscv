@@ -99,3 +99,6 @@
 //   TRAPFRAME (p->trapframe, used by the trampoline)
 //   TRAMPOLINE (the same page as in the kernel)
 #define TRAPFRAME (TRAMPOLINE - PGSIZE)
+
+// Machine master is always cpu 0
+#define IS_MMASTER (!cpuid())

@@ -1,3 +1,4 @@
+#include "communication.h"
 #include "types.h"
 #include "param.h"
 #include "memlayout.h"
@@ -242,7 +243,8 @@ timerinit()
 
 // check if it's an external interrupt or software interrupt,
 // and handle it.
-// returns 2 if timer interrupt,
+// returns 3 if Inter Processor Interrupt,
+// 2 if timer interrupt,
 // 1 if other device,
 // 0 if not recognized.
 int
@@ -276,7 +278,9 @@ devintr()
     return 1;
   } else if(scause == 0x8000000000000001L){
     // supervisor software interrupt
-    panic("supervisor software interrupt");
+    process_msg();
+    w_sip(r_sip() & ~SIP_SSIP);
+    return 3;
   } else if(scause == 0x8000000000000005L){
     if(cpuid() == 0){
       clockintr();

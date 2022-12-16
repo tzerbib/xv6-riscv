@@ -12,6 +12,7 @@ struct boot_arg{
   ptr_t entry;
   ptr_t pgt;
   uint32_t ready;
+  ptr_t topology;
 };
 
 void start_all_domains(void);

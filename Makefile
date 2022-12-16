@@ -1,7 +1,7 @@
 K=kernel
 U=user
 
-OPENSBI=../opensbi
+OPENSBI=opensbi
 OPENSBI_FW_JUMP=$(OPENSBI)/build/platform/generic/firmware/fw_jump.bin
 
 OBJS = \
@@ -35,6 +35,7 @@ OBJS = \
   $K/dtb.o \
   $K/topology.o \
   $K/sbi.o \
+  $K/communication.o \
 
 CPUS     ?= 4
 NODES    ?= 2

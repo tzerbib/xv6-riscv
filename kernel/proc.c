@@ -133,7 +133,7 @@ allocpid() {
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
 // If there are no free procs, or a memory allocation fails, return 0.
-static struct proc*
+struct proc*
 allocproc(void)
 {
   struct proc *p;
@@ -471,7 +471,7 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-  unsigned int t = 0;
+  // unsigned int t = 0;
   
   c->proc = 0;
   for(;;){
@@ -480,7 +480,7 @@ scheduler(void)
 
     for(p = proc; p < &proc[NPROC]; p++) {
       // printf("acquiring %p (%d)\n", &p->lock, t);
-      t++;
+      // t++;
       acquire(&p->lock);
       if(p->state == RUNNABLE){
         // printf("proc %p runnable (%d)\n", p, t);
@@ -543,20 +543,8 @@ yield(void)
 void
 forkret(void)
 {
-  static int first = 1;
-
   // Still holding p->lock from scheduler.
   release(&myproc()->lock);
-
-  if(first && cpuid() == 0){
-    // File system initialization must be run in the context of a
-    // regular process (e.g., because it calls sleep), and thus cannot
-    // be run from main().
-    first = 0;
-    fsinit(ROOTDEV);
-    start_all_domains();
-  }
-
   usertrapret();
 }
 

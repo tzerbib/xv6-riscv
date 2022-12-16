@@ -4,6 +4,7 @@
 #include "types.h"
 #include "spinlock.h"
 #include "kalloc.h"
+#include "communication.h"
 
 #define DOM_DEV_DFT 0
 
@@ -12,7 +13,7 @@ struct machine{
   struct memrange* all_ranges; // Linked list of memory ranges of the machine
   struct domain* all_domains;  // Linked list of all numa domains of the machine
   struct device* all_devices;  // Linked list of all devices of the machine
-}__attribute__((packed));
+};
 
 
 struct cpu_desc{
@@ -20,7 +21,7 @@ struct cpu_desc{
   struct cpu_desc* next;       // Next cpu on the same domain
   struct domain* domain;       // Domain of the cpu
   uint32_t lapic;              // APIC ID
-}__attribute__((packed));
+};
 
 
 struct memrange{
@@ -41,8 +42,8 @@ struct domain{
   struct kmem freepages;       // First free page for this domain
   struct device* devices;      // First device owned by this domain
   struct memrange* kernelmr;   // Memory range containing the kernel text+data
+  struct ring* combuf;         // The communication rinbuffer of this domain
 };
-
 
 
 enum devices_id{
@@ -64,7 +65,7 @@ struct device{
 
 
 void init_topology(uint32_t);
-void add_numa(void);
+void add_numa(ptr_t*);
 void print_topology(void);
 void assign_freepages(void*);
 void* kalloc_node(struct domain* d);
@@ -78,6 +79,7 @@ void forall_cpu(void (*)(void*, void*), void*);
 void forall_memrange(void (*)(void*, void*), void*);
 void forall_device(void (*)(void*, void*), void*);
 void forall_cpu_in_domain(struct domain*, void (*)(void*, void*), void*);
+void forall_mr_in_domain(struct domain*, void (*)(void*, void*), void*);
 int get_nb_domain(void);
 int get_nb_cpu(void);
 int get_nb_device(void);

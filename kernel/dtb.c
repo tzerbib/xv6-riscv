@@ -142,71 +142,6 @@ applySubnodes(const void* node, const uint32_t* (*f)(const void*, void*), void* 
 }
 
 
-// Return the number of properties of a given node
-int get_nb_prop(void* begin, int nb_parent, struct properties parent_p[]){
-  int r = nb_parent;
-
-  // Check if begin points to a node
-  if(bigToLittleEndian32(begin) != FDT_BEGIN_NODE){
-    panic("in get_address_cells: begin should be the begining of a node");
-  }
-
-  // Skip node name
-  uint32_t* i = begin+1;
-  char* c;
-  for(c = (char*)(i+1); *c; c++);
-  i = (uint32_t*)(c+1);
-
-  for(;; i++){
-    // Ensure alignment
-    while((ptr_t)i%4) {i=(uint32_t*)((char*)i+1);}
-
-    switch(bigToLittleEndian32(i)){
-      case FDT_NOP:
-        continue;
-        break;
-      
-      case FDT_BEGIN_NODE:
-        // DTB specifies that all properties of a node preceide subnodes
-        return r;
-        break;
-      
-      case FDT_PROP:
-        // Get property name
-        char* prop_name = (char*)fdt.fd_strings+bigToLittleEndian32(i+2);
-
-        // Check if property already exist in parent
-        int np = 0;
-        while(np < nb_parent){
-          if(!strcmp(prop_name, parent_p[np].name)){
-            break;
-          }
-        }
-        
-        if(np == nb_parent)
-          r++;
-        
-        i = skip_fd_prop(i);
-        break;
-      
-      case FDT_END_NODE: 
-        return r;
-        break;
-
-      case FDT_END:
-        panic("in get_address_cells: reached end of FDT");
-        break;
-      
-      default: {
-        printf("in get_address_cells, token %p not found\n", bigToLittleEndian32(i));
-        panic("");
-      }
-    }
-  }
-  return r;
-}
-
-
 void add_new_prop(char* prop_name, char* prop_value, uint32_t p_size, void* p){
   struct args_parse_prop* args = p;
 
@@ -460,37 +395,3 @@ void print_dtb(){
   print_dt_node(fdt.fd_struct, &args);
   printf("\n");
 }
-
-
-void __is_reserved(ptr_t addr, ptr_t range, void* param){
-  struct args_reserved* args = param;
-
-  if((ptr_t)args->addr >= addr && (ptr_t)args->addr < addr+range){
-    *args->reserved = 1;
-    return;
-  }
-}
-
-
-unsigned char is_reserved(const void* reserved_node, ptr_t addr){
-  if(!reserved_node)
-    return 0;
-
-  struct cells c = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
-  get_prop(reserved_node, FDT_ADDRESS_CELLS, sizeof(FDT_ADDRESS_CELLS), &c.address_cells);
-  get_prop(reserved_node, FDT_SIZE_CELLS, sizeof(FDT_SIZE_CELLS), &c.size_cells);
-
-  struct args_reserved args;
-  struct args_parse_reg args_reg;
-  unsigned char is_res = 0;
-  args.reserved = &is_res;
-  args.addr = (void*)addr;
-  args_reg.c = &c;
-  args_reg.args = &args;
-  args_reg.f = __is_reserved;
-  
-  applySubnodes(reserved_node, get_all_res, &args_reg);
-
-  return *args.reserved;
-}
-

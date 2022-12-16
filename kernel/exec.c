@@ -21,6 +21,7 @@ extern void _slaves_boot(void);
 extern void _masters_wakeup(void);
 extern pagetable_t kernel_pagetable;
 extern ptr_t dtb_pa;
+extern ptr_t machine;
 
 // Array of kernel images paths
 char* kimg[NB_SOCKETS] = {[0 ... NB_SOCKETS-1] = "/kernel"};
@@ -297,6 +298,7 @@ void kexec(void* memrange, void* args){
   bargs->dtb_pa = dtb_pa;
   bargs->current_domain = mr->domain->domain_id;
   bargs->pgt = (ptr_t)pgt;
+  bargs->topology = machine;
 
   // TODO: read the _entry symbol from ELF
   bargs->entry = (ptr_t)_masters_boot + (ptr_t)mr->start - p_entry;
@@ -360,6 +362,7 @@ void start_all_domains(void)
   
   // TODO: prevent interrupts from forkret in DOM1 (resolved with comm).
   uint64_t i = 1<<28;
+  for(;;);
   for(; i; --i);
   printf("salut\n");
 }

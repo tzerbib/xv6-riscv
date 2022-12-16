@@ -1,7 +1,7 @@
 #include "types.h"
 #include "riscv.h"
 
-// entry.S needs one stack per CPU.
+// entry.S needs 2 stacks for booting hart 0 and giving him one.
 __attribute__ ((aligned (16))) char stack0[PGSIZE];
 __attribute__ ((aligned (16))) char stack1[PGSIZE];
 
@@ -17,7 +17,6 @@ extern void slave_main();
 static inline void inithartid(unsigned long hartid){
   w_tp(hartid);
 }
-
 
 static inline void
 common_init(uint64_t hartid)
@@ -47,7 +46,6 @@ void domain_master_wakeup_start(uint64_t hartid)
   common_init(hartid);
   domain_master_wakeup(hartid);
 }
-
 
 void
 slave_start(uint64_t hartid)
