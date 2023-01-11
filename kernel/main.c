@@ -21,7 +21,6 @@ ptr_t dtb_pa;
 extern struct proc* allocproc(void);
 extern struct proc *initproc;
 
-
 void
 kernel_proc()
 {
@@ -39,7 +38,7 @@ kernel_proc()
 
     // Wake up all other domain masters by sending IPIs (on this kernel image)
     // Mandatory to be sure that IRQ from disk will be held by some hart
-    forall_domain(wakeup_masters, 0);
+    forall_domain(machine, wakeup_masters, 0);
 
     // File system initialization must be run in the context of a
     // regular process (e.g., because it calls sleep)
@@ -76,6 +75,7 @@ kernel_proc()
   p->parent = initproc;
 
   // Exit kernel proc
+  for(;;);
   sched();
   panic("kernel proc exit");
 }
@@ -151,14 +151,14 @@ void domain_master_wakeup(unsigned long hartid)
   kvminithart();    // turn on paging
   trapinithart();   // install kernel trap vector
 
-  struct memrange* mr = ((struct domain*)my_domain())->kernelmr;
+  struct memrange* mr = find_memrange((struct machine*)machine, ((struct domain*)my_domain())->combuf);
   struct boot_arg* tmp_args = (struct boot_arg*)PGROUNDDOWN((ptr_t)((char*)mr->start+mr->length-1));
   tmp_args->ready = 0;
   
   plicinithart();   // ask PLIC for device interrupts
 
   // Synchronization barrier
-  while(!(tmp_args->ready));
+  while(!tmp_args->ready);
   __sync_synchronize();
 
   struct boot_arg* args = (struct boot_arg*)((char*)mr->start + mr->length) - 1;
@@ -183,7 +183,7 @@ domain_master_main(ptr_t args)
   bargs.dtb_pa = tmp_bargs->dtb_pa;
   bargs.current_domain = tmp_bargs->current_domain;
   bargs.pgt = tmp_bargs->pgt;
-  machine = (struct machine*)tmp_bargs->topology;
+  struct machine* m = machine = (struct machine*)tmp_bargs->topology;
 
   ksize = (ptr_t)end - (ptr_t)_entry;
   dtb_pa = bargs.dtb_pa;
@@ -193,7 +193,7 @@ domain_master_main(ptr_t args)
   kinit();           // physical page allocator
   kvminit();         // create kernel page table
   init_topology(bargs.current_domain);
-  add_numa((ptr_t*)machine);
+  add_numa(m);
   numa_ready = 1;  // switch to kalloc_numa
   assign_freepages((void*)bargs.dtb_pa);
   dtb_kvmmake(kernel_pagetable, (void*)bargs.pgt); // Map uart registers, virtio mmio disk interface and plic

@@ -8,6 +8,7 @@
 
 extern struct device* uart0;
 extern struct device* virtio0;
+extern struct machine* machine;
 
 
 //
@@ -29,7 +30,7 @@ void
 plicinit(void)
 {
   // set desired IRQ priorities non-zero (otherwise disabled).
-  forall_device(__plicinit, 0);
+  forall_device(machine, __plicinit, 0);
 }
 
 void

@@ -65,7 +65,7 @@ struct device{
 
 
 void init_topology(uint32_t);
-void add_numa(ptr_t*);
+void add_numa(struct machine*);
 void print_topology(void);
 void assign_freepages(void*);
 void* kalloc_node(struct domain* d);
@@ -74,15 +74,15 @@ void print_struct_machine_loc(void);
 void* find_memrange(struct machine*, void*);
 
 struct domain* get_domain(int);
-void forall_domain(void (*)(void*, void*), void*);
-void forall_cpu(void (*)(void*, void*), void*);
-void forall_memrange(void (*)(void*, void*), void*);
-void forall_device(void (*)(void*, void*), void*);
+void forall_domain(struct machine*, void (*)(void*, void*), void*);
+void forall_cpu(struct machine*, void (*)(void*, void*), void*);
+void forall_memrange(struct machine*, void (*)(void*, void*), void*);
+void forall_device(struct machine*, void (*)(void*, void*), void*);
 void forall_cpu_in_domain(struct domain*, void (*)(void*, void*), void*);
 void forall_mr_in_domain(struct domain*, void (*)(void*, void*), void*);
-int get_nb_domain(void);
-int get_nb_cpu(void);
-int get_nb_device(void);
+int get_nb_domain(struct machine*);
+int get_nb_cpu(struct machine*);
+int get_nb_device(struct machine*);
 int get_nb_cpu_in_domain(struct domain*);
 void dtb_kvmmake(void*, void*);
 

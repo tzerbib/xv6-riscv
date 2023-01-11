@@ -558,7 +558,7 @@ void separate_memrange(ptr_t addr, ptr_t range, void* param){
   // Case start of the memrange in a reserved area
   if(*args->addr_p1 >= addr && *args->addr_p1 < addr+range){
     *args->addr_p2 = *args->addr_p1;
-    *args->range_p2 = (addr+range < *args->addr_p1+*args->range_p1)? addr+range - *args->addr_p2 : *args->addr_p1+range;
+    *args->range_p2 = (addr+range < *args->addr_p1+*args->range_p1)? addr+range - *args->addr_p2 : addr+range-*args->addr_p1;
     *args->range_p1 = ((addr+range) - *args->addr_p2 < *args->range_p1)? *args->range_p1 - ((addr+range) - *args->addr_p2) : 0;
     *args->addr_p1 = addr+range;
   }
@@ -645,7 +645,7 @@ void compute_ranges(ptr_t addr, ptr_t range, void* param){
     separate_map_memrange(PGROUNDDOWN((ptr_t)fdt.dtb_start), PGROUNDUP((ptr_t)fdt.dtb_end)-PGROUNDDOWN((ptr_t)fdt.dtb_start), *domain, &args);
   }
 
-  // Avoid kernel + communication buffers (placed right after the kernel)
+  // Avoid kernel + communication buffers placed right after the kernel
   if((ptr_t)p_entry >= addr  && (ptr_t)p_entry < addr+range){
     struct args_separate_mr args;
     ptr_t addr2, r2, addr3, r3;
@@ -670,8 +670,10 @@ void compute_ranges(ptr_t addr, ptr_t range, void* param){
     separate_map_memrange(PGROUNDDOWN((ptr_t)p_entry), PGROUNDUP(ksize), *domain, &args);
   }
 
-  add_memrange(*domain, (void*)addr, range, 0);
-  kvmmap(kernel_pagetable, addr, addr, range, PTE_R | PTE_W);
+  if(range){
+    add_memrange(*domain, (void*)addr, range, 0);
+    kvmmap(kernel_pagetable, addr, addr, range, PTE_R | PTE_W);
+  }
 }
 
 
@@ -718,8 +720,7 @@ compute_topology(const void* node, void* param){
     applyProperties(node, parse_reg, &args_reg);
   }
 
-  const uint32_t* next = applySubnodes(node, compute_topology, &new_cells);
-  return next;
+  return applySubnodes(node, compute_topology, &new_cells);
 }
 
 
@@ -808,43 +809,57 @@ void set_combuf_mr(void* dom, void* args){
 }
 
 
-void __correct_memrange(void* memrange, void* args){
-  struct memrange* mr = memrange;
-  struct machine* given_m = args;
+void copy_domain(void* dom, void* args){
+  struct domain *new, *d = dom;
+  new = add_domain(d->domain_id);
+  new->combuf = d->combuf;
+}
 
-  struct memrange* given_mr = find_memrange(given_m, mr->start);
-  mr->reserved = given_mr->reserved;
+void copy_mr(void* memrange, void* args){
+  struct memrange *new, *mr = memrange;
+  new = add_memrange(mr->domain->domain_id, mr->start, mr->length, mr->reserved);
+  if(mr->domain->kernelmr->start == new->start)
+    new->domain->kernelmr = new;
+
+  if(new->start == new->domain->combuf)
+    memset(new->start, 0, COMM_BUF_SZ);
+  
+  // map memrange
+  int perm = PTE_R | PTE_W | PTE_X;
+  kvmmap(kernel_pagetable, (ptr_t)mr->start, (ptr_t)mr->start, mr->length, perm);
+}
+
+void copy_cpu(void* proc, void* args){
+  struct cpu_desc* cpu = proc;
+  add_cpu(cpu->domain->domain_id, cpu->lapic);
+}
+
+void copy_dev(void* dev, void* args){
+  struct device* d = dev;
+  add_device(d->id, d->owner->domain_id, d->irq, d->start, d->length);
 }
 
 
-void correct_topo(void* dom, void* args){
-  struct machine* given_m = args;
-  struct domain *given_d, *d = dom;
-
-  // Look for corresponding domain on given topology
-  for(given_d=given_m->all_domains; given_d; given_d=given_d->all_next){
-    if(given_d->domain_id != d->domain_id)
-      continue;
-    
-    d->kernelmr = given_d->kernelmr;
-    d->combuf = given_d->combuf;
-    forall_memrange(__correct_memrange, given_m);
-  }
+// Copy information as reserved, kernemr or combufmr from given topology
+void copy_topo(struct machine* given_topo){
+  forall_domain(given_topo, copy_domain, NULL);
+  forall_memrange(given_topo, copy_mr, NULL);
+  forall_cpu(given_topo, copy_cpu, NULL);
 }
 
 
 // Add a numa topology given by the DTB to the machine description
-void add_numa(ptr_t* given_topo){
-  struct cells cell = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
-  compute_topology(fdt.fd_struct, &cell);
-
+void add_numa(struct machine* given_topo){
   // Set kernel memory range + all comunication buffer location
   if(IS_MMASTER){
-    forall_domain(set_kernel_mr, 0);
-    forall_domain(set_combuf_mr, 0);
+    struct cells cell = {FDT_DFT_ADDR_CELLS, FDT_DFT_SIZE_CELLS};
+    compute_topology(fdt.fd_struct, &cell);
+    forall_domain(machine, set_kernel_mr, 0);
+    forall_domain(machine, set_combuf_mr, 0);
   }
   else
-    forall_domain(correct_topo, given_topo);
+    // forall_domain(copy_topo, given_topo);
+    copy_topo(given_topo);
 
   // Set hart 0 as domain master
   struct cpu_desc *curr, *h0;
@@ -856,10 +871,10 @@ void add_numa(ptr_t* given_topo){
     while(curr->next->lapic != 0)
       curr = curr->next;
     h0 = curr->next;
+    curr->next = h0->next;
+    h0->next = d->cpus;
+    d->cpus = h0;
   }
-  curr->next = h0->next;
-  h0->next = d->cpus;
-  d->cpus = h0;
 }
 
 
@@ -979,38 +994,38 @@ struct domain* get_domain(int cpu){
 }
 
 
-void forall_domain(void (*f)(void*, void*), void* args){
+void forall_domain(struct machine* m, void (*f)(void*, void*), void* args){
   struct domain* curr_dom;
 
   // Browse all domains
-  for(curr_dom=machine->all_domains; curr_dom; curr_dom=curr_dom->all_next){
+  for(curr_dom=m->all_domains; curr_dom; curr_dom=curr_dom->all_next){
     f(curr_dom, args);
   }
 }
 
-void forall_cpu(void (*f)(void*, void*), void* args){
+void forall_cpu(struct machine* m, void (*f)(void*, void*), void* args){
   struct cpu_desc* curr_cpu;
 
   // Browse all cpus
-  for(curr_cpu=machine->all_cpus; curr_cpu; curr_cpu=curr_cpu->all_next){
+  for(curr_cpu=m->all_cpus; curr_cpu; curr_cpu=curr_cpu->all_next){
     f(curr_cpu, args);
   }
 }
 
-void forall_memrange(void (*f)(void*, void*), void* args){
+void forall_memrange(struct machine* m, void (*f)(void*, void*), void* args){
   struct memrange* curr_mr;
 
   // Browse all cpus
-  for(curr_mr=machine->all_ranges; curr_mr; curr_mr=curr_mr->all_next){
+  for(curr_mr=m->all_ranges; curr_mr; curr_mr=curr_mr->all_next){
     f(curr_mr, args);
   }
 }
 
-void forall_device(void (*f)(void*, void*), void* args){
+void forall_device(struct machine* m, void (*f)(void*, void*), void* args){
   struct device* curr_dev;
 
   // Browse all cpus
-  for(curr_dev=machine->all_devices; curr_dev; curr_dev=curr_dev->all_next){
+  for(curr_dev=m->all_devices; curr_dev; curr_dev=curr_dev->all_next){
     f(curr_dev, args);
   }
 }
@@ -1040,26 +1055,26 @@ static inline void count(void* v, void* args){
   *n = *n+1;
 }
 
-int get_nb_domain(void){
+int get_nb_domain(struct machine* m){
   int n = 0;
 
-  forall_domain(count, &n);
+  forall_domain(m, count, &n);
 
   return n;
 }
 
-int get_nb_cpu(void){
+int get_nb_cpu(struct machine* m){
   int n = 0;
 
-  forall_cpu(count, &n);
+  forall_cpu(m, count, &n);
 
   return n;
 }
 
-int get_nb_device(void){
+int get_nb_device(struct machine* m){
   int n = 0;
 
-  forall_device(count, &n);
+  forall_device(m, count, &n);
 
   return n;
 }

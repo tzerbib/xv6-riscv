@@ -1,3 +1,4 @@
+#include "communication.h"
 #include "types.h"
 #include "riscv.h"
 #include "exec.h"
@@ -21,7 +22,7 @@ extern void _slaves_boot(void);
 extern void _masters_wakeup(void);
 extern pagetable_t kernel_pagetable;
 extern ptr_t dtb_pa;
-extern ptr_t machine;
+extern struct machine* machine;
 
 // Array of kernel images paths
 char* kimg[NB_SOCKETS] = {[0 ... NB_SOCKETS-1] = "/kernel"};
@@ -272,7 +273,7 @@ kload(void* domain, char* kimg, struct memrange* mr)
   struct map121_args args;
   args.pgt = pagetable;
   args.mr = mr;
-  forall_memrange(map121, &args);
+  forall_memrange(machine, map121, &args);
 
   return pagetable;
 
@@ -293,15 +294,15 @@ void kexec(void* memrange, void* args){
   struct memrange* mr = memrange;
   pagetable_t pgt = args;
 
-  // Information is stored at the start of the last page of the kernels memrange
+  // Information is stored at the start of the last page of the combuf memrange
   struct boot_arg* bargs = (struct boot_arg*)PGROUNDDOWN((ptr_t)((char*)mr->start+mr->length-1));
   bargs->dtb_pa = dtb_pa;
   bargs->current_domain = mr->domain->domain_id;
   bargs->pgt = (ptr_t)pgt;
-  bargs->topology = machine;
+  bargs->topology = (ptr_t)machine;
 
   // TODO: read the _entry symbol from ELF
-  bargs->entry = (ptr_t)_masters_boot + (ptr_t)mr->start - p_entry;
+  bargs->entry = (ptr_t)_masters_boot + (ptr_t)mr->domain->kernelmr->start - p_entry;
 
   // Make new kernel first page executable in both pagetables
   vmperm(kernel_pagetable, PGROUNDDOWN(bargs->entry), PGSIZE, PTE_X, 1);
@@ -322,8 +323,8 @@ wakeup_masters(void* domain, void* args)
   struct domain* d = domain;
   if(my_domain() == d) return;
   
-  // Temporary stack located at the end of the kernel memory range
-  ptr_t* sp = (ptr_t*)((char*)d->kernelmr->start + d->kernelmr->length);
+  // Temporary stack located at the penultimate page of the communication buffer
+  ptr_t* sp = (ptr_t*)((char*)d->combuf + COMM_BUF_SZ - PGSIZE);
   sbi_start_hart(d->cpus->lapic, (ptr_t)_masters_wakeup, (ptr_t)sp);
 }
 
@@ -336,8 +337,10 @@ prepare_domain(void* domain, void* kimg)
   if(d == my_domain()) return;
   pagetable_t pgt;
   struct memrange* mr = d->kernelmr;
+
   pgt = kload(domain, kimg, mr);
 
+  mr = find_memrange((struct machine*)machine, d->combuf);
   kexec(mr, pgt);
 }
 
@@ -348,7 +351,7 @@ start_domain(void* domain, void* arg)
   struct domain* d = domain;
   // Avoid caller's domain 
   if(d == my_domain()) return;
-  struct memrange* mr = d->kernelmr;
+  struct memrange* mr = find_memrange((struct machine*)machine, d->combuf);
   struct boot_arg* args = (struct boot_arg*)PGROUNDDOWN((ptr_t)((char*)mr->start+mr->length-1));
   args->ready = 1;
 }
@@ -357,12 +360,11 @@ start_domain(void* domain, void* arg)
 void start_all_domains(void)
 {
   // Load kernel images in the memory of all domains then start them all
-  forall_domain(prepare_domain, kimg[kimg_id++]);
-  forall_domain(start_domain, 0);
+  forall_domain(machine, prepare_domain, kimg[kimg_id++]);
+  forall_domain(machine, start_domain, 0);
   
   // TODO: prevent interrupts from forkret in DOM1 (resolved with comm).
   uint64_t i = 1<<28;
-  for(;;);
   for(; i; --i);
   printf("salut\n");
 }
