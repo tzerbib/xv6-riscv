@@ -21,13 +21,20 @@ ptr_t dtb_pa;
 extern struct proc* allocproc(void);
 extern struct proc *initproc;
 
+
+void send_end_wait(void* dom, void* args){
+  struct domain* d = dom;
+  struct barrier* b = args;
+  if(d != my_domain())
+    send(d->cpus->lapic, release_barrier, (uintptr_t)&b->wait[d->domain_id-1], 0);
+}
+
 void
 kernel_proc()
 {
   struct proc* p = myproc();
   release(&p->lock);
 
-  initcomm();         // communication buffer
   binit();            // buffer cache
   iinit();            // inode table
   fileinit();         // file table
@@ -44,8 +51,15 @@ kernel_proc()
     // regular process (e.g., because it calls sleep)
     fsinit(ROOTDEV);
 
+    // Create the communication initialisation barrier
+    int nb_masters = get_nb_domain(machine) - 1;
+    struct barrier* b = create_barrier(nb_masters);
+
     // Load kernel images into memory and start all domain masters on them
-    start_all_domains();
+    start_all_domains(b);
+
+    while(b->remaining);
+    forall_domain(machine, send_end_wait, b);
 
     // Machine master
     userinit();       // first user process
@@ -63,10 +77,9 @@ kernel_proc()
     __sync_synchronize();
 
     // Wake up all slaves by sending IPIs
-    forall_cpu_in_domain(my_domain(), wakeup_slaves, (void*)kernel_pagetable);
   }
 
-  // Wait for the creation of initproc by one of the kernel
+  forall_cpu_in_domain(my_domain(), wakeup_slaves, (void*)kernel_pagetable);
 
   // Release the process
   acquire(&p->lock);
@@ -127,6 +140,7 @@ machine_master_main(unsigned long hartid, ptr_t dtb)
   trapinithart();  // install kernel trap vector
   plicinit();      // set up interrupt controller
   plicinithart();  // ask PLIC for device interrupts
+  initcomm();      // communication buffer
 
   // Create a main proc in the proctable (enables context switches)
   struct proc *p;
@@ -169,6 +183,7 @@ void domain_master_wakeup(unsigned long hartid)
   args->mksatppgt = tmp_args->mksatppgt;
   args->pgt = tmp_args->pgt;
   args->topology = tmp_args->topology;
+  args->barrier = tmp_args->barrier;
 
   ((void(*)(unsigned long, ptr_t, ptr_t))args->entry)(hartid, args->mksatppgt, (ptr_t)args);
 }
@@ -183,6 +198,7 @@ domain_master_main(ptr_t args)
   bargs.dtb_pa = tmp_bargs->dtb_pa;
   bargs.current_domain = tmp_bargs->current_domain;
   bargs.pgt = tmp_bargs->pgt;
+  bargs.barrier = tmp_bargs->barrier;
   struct machine* m = machine = (struct machine*)tmp_bargs->topology;
 
   ksize = (ptr_t)end - (ptr_t)_entry;
@@ -215,6 +231,9 @@ domain_master_main(ptr_t args)
   trapinithart();     // install kernel trap vector
   plicinit();         // set up interrupt controller
   plicinithart();     // ask PLIC for device interrupts
+  initcomm();         // communication buffer
+
+  wait_barrier((void*)bargs.barrier, bargs.current_domain-1);
 
   // Create a main proc in the proctable (enables context switches)
   struct proc *p;
@@ -238,5 +257,6 @@ slave_main(void)
   plicinithart();   // ask PLIC for device interrupts
 
   printf("GOOD!\n");
+  for(;;);
   scheduler();
 }

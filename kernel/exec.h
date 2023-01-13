@@ -13,9 +13,10 @@ struct boot_arg{
   ptr_t pgt;
   uint32_t ready;
   ptr_t topology;
+  ptr_t barrier;
 };
 
-void start_all_domains(void);
+void start_all_domains(void*);
 void wakeup_masters(void*, void*);
 void wakeup_slaves(void*, void*);
 

@@ -27,9 +27,22 @@ struct ring{
 } __attribute__ ((aligned (64)));
 
 
+struct barrier{
+  size_t remaining;
+  int owner;
+  char* wait[0];
+};
+
+
 void initcomm(void);
 void process_msg();
 void send(int, void (*)(uintptr_t, uintptr_t), uintptr_t, uintptr_t);
+
+// Sync functions
+struct barrier* create_barrier(size_t);
+void release_barrier(uintptr_t, uintptr_t);
+void on_barrier(uintptr_t, uintptr_t);
+void wait_barrier(struct barrier*, size_t);
 
 // Remote functions
 void remote_grant(uintptr_t, uintptr_t);

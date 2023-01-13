@@ -1,4 +1,5 @@
 #include <stdatomic.h>
+#include <stdint.h>
 #include "communication.h"
 #include "sbi.h"
 #include "topology.h"
@@ -77,4 +78,30 @@ remote_printf(uintptr_t a1, uintptr_t a2)
 {
   // printf("(RPC: %d -> %d) ", a2, cpuid());
   printf("%s", a1);
+}
+
+
+struct barrier* create_barrier(size_t n){
+  struct barrier* b = kalloc();
+  b->remaining = n;
+  b->owner = ((struct domain*)my_domain())->domain_id;
+  return b;
+}
+
+void on_barrier(uintptr_t a1, uintptr_t a2){
+  (void)a2;
+  struct barrier* b = (void*)a1;
+  --b->remaining;
+}
+
+void release_barrier(uintptr_t go, uintptr_t a2){
+  (void)a2;
+  *(char*)go = 1;
+}
+
+void wait_barrier(struct barrier* b, size_t my){
+  char wait = 1;
+  b->wait[my] = &wait;
+  send(b->owner, on_barrier, (uintptr_t)b, 0);
+  while(wait);
 }

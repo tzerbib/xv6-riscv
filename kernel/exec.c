@@ -35,6 +35,7 @@ struct map121_args{
   struct memrange* mr;
 };
 
+
 int
 exec(char *path, char **argv)
 {
@@ -354,19 +355,15 @@ start_domain(void* domain, void* arg)
   struct memrange* mr = find_memrange((struct machine*)machine, d->combuf);
   struct boot_arg* args = (struct boot_arg*)PGROUNDDOWN((ptr_t)((char*)mr->start+mr->length-1));
   args->ready = 1;
+  args->barrier = (ptr_t)arg;
 }
 
 
-void start_all_domains(void)
+void start_all_domains(void* b)
 {
   // Load kernel images in the memory of all domains then start them all
   forall_domain(machine, prepare_domain, kimg[kimg_id++]);
-  forall_domain(machine, start_domain, 0);
-  
-  // TODO: prevent interrupts from forkret in DOM1 (resolved with comm).
-  uint64_t i = 1<<28;
-  for(; i; --i);
-  printf("salut\n");
+  forall_domain(machine, start_domain, b);
 }
 
 

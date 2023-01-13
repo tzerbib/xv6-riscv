@@ -158,6 +158,7 @@ void* add_cpu(uint32_t domain_id, uint32_t apic_id){
   new_cpu->lapic = apic_id;
   struct domain* d = find_domain(machine, domain_id, 1);
   new_cpu->domain = d;
+  new_cpu->dom_master = 0;
   new_cpu->next = d->cpus;
   d->cpus = new_cpu;
 
@@ -809,6 +810,30 @@ void set_combuf_mr(void* dom, void* args){
 }
 
 
+void set_master(void* dom, void* args){
+  struct domain* d = dom;
+
+  // For the machine master, domain master are already in first position
+  if(IS_MMASTER)
+    d->cpus->dom_master = 1;
+  // Reorder cpus for domain masters to be first in topology
+  else{
+    struct cpu_desc *cpu = d->cpus, *prev;
+    
+    if(cpu->dom_master)
+      return;
+
+    for(; cpu && !cpu->dom_master; prev=cpu,cpu=cpu->next);
+    if(!cpu->dom_master){
+      printf("in set_master: no domain master for domain %d\n", d->domain_id);
+      panic("");
+    }
+    prev->next = cpu->next;
+    cpu->next = d->cpus;
+    d->cpus = cpu;
+  }
+}
+
 void copy_domain(void* dom, void* args){
   struct domain *new, *d = dom;
   new = add_domain(d->domain_id);
@@ -830,8 +855,9 @@ void copy_mr(void* memrange, void* args){
 }
 
 void copy_cpu(void* proc, void* args){
-  struct cpu_desc* cpu = proc;
-  add_cpu(cpu->domain->domain_id, cpu->lapic);
+  struct cpu_desc *new, *cpu = proc;
+  new = add_cpu(cpu->domain->domain_id, cpu->lapic);
+  new->dom_master = cpu->dom_master;
 }
 
 void copy_dev(void* dev, void* args){
@@ -856,25 +882,27 @@ void add_numa(struct machine* given_topo){
     compute_topology(fdt.fd_struct, &cell);
     forall_domain(machine, set_kernel_mr, 0);
     forall_domain(machine, set_combuf_mr, 0);
+
+    // Set hart 0 as domain master
+    struct cpu_desc *curr, *h0;
+    struct domain* d = machine->all_domains;
+    while(d->domain_id != 0)
+      d = d->all_next;
+    h0 = curr = d->cpus;
+    if(h0->lapic){
+      while(curr->next->lapic != 0)
+        curr = curr->next;
+      h0 = curr->next;
+      curr->next = h0->next;
+      h0->next = d->cpus;
+      d->cpus = h0;
+    }
   }
   else
     // forall_domain(copy_topo, given_topo);
     copy_topo(given_topo);
 
-  // Set hart 0 as domain master
-  struct cpu_desc *curr, *h0;
-  struct domain* d = machine->all_domains;
-  while(d->domain_id != 0)
-    d = d->all_next;
-  h0 = curr = d->cpus;
-  if(h0->lapic){
-    while(curr->next->lapic != 0)
-      curr = curr->next;
-    h0 = curr->next;
-    curr->next = h0->next;
-    h0->next = d->cpus;
-    d->cpus = h0;
-  }
+  forall_domain(machine, set_master, 0);
 }
 
 
@@ -1095,7 +1123,8 @@ int get_nb_cpu_in_domain(struct domain* d){
 
 
 void print_cpu(struct cpu_desc* cpu){
-  printf("(%p) CPU id %d\n", cpu, cpu->lapic);
+  printf("(%p) CPU id %d", cpu, cpu->lapic);
+  cpu->dom_master? printf(" (master)\n") : printf("\n");
 }
 
 

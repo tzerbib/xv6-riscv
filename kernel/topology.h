@@ -21,6 +21,7 @@ struct cpu_desc{
   struct cpu_desc* next;       // Next cpu on the same domain
   struct domain* domain;       // Domain of the cpu
   uint32_t lapic;              // APIC ID
+  char dom_master;             // Flag set to 1 if this core is a domain master
 };
 
 
