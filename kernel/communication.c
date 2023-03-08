@@ -58,8 +58,8 @@ restart:
   pop_off(); // now, can schedule again
   
   // TODO: enable more than sizeof(ulong) core on the machine
-  unsigned long hart_mask = 1 << d->cpus->lapic; // Case of dom 0 where cpu 0 is not the first in the list
-  // unsigned long hart_mask = 1;
+  // Assert: only the first core of each domain handles receipts
+  unsigned long hart_mask = 1 << d->cpus->lapic;
   sbi_send_ipi(&hart_mask);
 }
 
@@ -88,19 +88,25 @@ struct barrier* create_barrier(size_t n){
   return b;
 }
 
+// Barrier owner decreases the number of remaining thread to wait for
 void on_barrier(uintptr_t a1, uintptr_t a2){
   (void)a2;
   struct barrier* b = (void*)a1;
-  --b->remaining;
+  atomic_fetch_add(&b->remaining, -1);
 }
 
-void release_barrier(uintptr_t go, uintptr_t a2){
+// Wainting threads set their local waiting point to exit their loop
+void release_barrier(uintptr_t wait, uintptr_t a2){
   (void)a2;
-  *(char*)go = 1;
+  // Set the local variable go (in wait_barrier context) to 0
+  *(char*)wait = 0;
 }
 
+// Wainting threads loop on a local variable
 void wait_barrier(struct barrier* b, size_t my){
+  // Threads wait on the local variable go
   char wait = 1;
+  // Save wait address to modify it on release_barrier
   b->wait[my] = &wait;
   send(b->owner, on_barrier, (uintptr_t)b, 0);
   while(wait);

@@ -22,11 +22,12 @@ extern struct proc* allocproc(void);
 extern struct proc *initproc;
 
 
+// Send message to waiting threads for them to modify the variable they watch
 void send_end_wait(void* dom, void* args){
   struct domain* d = dom;
   struct barrier* b = args;
   if(d != my_domain())
-    send(d->cpus->lapic, release_barrier, (uintptr_t)&b->wait[d->domain_id-1], 0);
+    send(d->cpus->lapic, release_barrier, (uintptr_t)b->wait[d->domain_id-1], 0);
 }
 
 void
@@ -58,11 +59,12 @@ kernel_proc()
     // Load kernel images into memory and start all domain masters on them
     start_all_domains(b);
 
+    // Wait for all threads to have initialize their communication buffer
     while(b->remaining);
     forall_domain(machine, send_end_wait, b);
 
-    // Machine master
-    userinit();       // first user process
+    // first user process
+    userinit();
   }
   else{
     // Domain masters
@@ -88,7 +90,6 @@ kernel_proc()
   p->parent = initproc;
 
   // Exit kernel proc
-  for(;;);
   sched();
   panic("kernel proc exit");
 }

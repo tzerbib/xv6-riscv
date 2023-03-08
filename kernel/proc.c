@@ -72,6 +72,7 @@ cpuid()
 
 
 // Must be called with interrupts disable because of cpuid()
+// TODO: speed up access to current dom as this fun is used on every allocation
 void* my_domain(){
   void* r = 0;
   
